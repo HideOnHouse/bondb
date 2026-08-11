@@ -1,11 +1,14 @@
 import { createDemoRepository } from './repository.js';
 import { calculateScenarioImpact, validateScenario } from './scenario.js';
 import { explainMetricForException, filterExceptionsForMetric, statusTone } from './operations.js';
+import { normalizeSnapshotTime, validateLiveSnapshot } from './live.js';
+import { navigation as demoNavigation } from './data.js';
 import {
   compareLabels,
   contextSearch,
   filterExceptions,
   formatContextAmount,
+  formatRatioPercent,
   formatSignedNumber,
   formatSignedPercent,
   isValidCalendarDate,
@@ -15,8 +18,19 @@ import {
 } from './state.js';
 
 const root = document.querySelector('#app');
-const repository = createDemoRepository();
-const {
+const demoMode = new URLSearchParams(window.location.search).get('demo') === 'true';
+const repository = demoMode ? createDemoRepository() : null;
+const initialSnapshot = repository?.getSnapshot() || {
+  cashflows: [],
+  checklist: [],
+  drivers: [],
+  lendingRows: [],
+  metricDictionary: [],
+  metrics: [],
+  navigation: demoNavigation,
+  positions: [],
+};
+let {
   cashflows,
   checklist,
   drivers,
@@ -25,9 +39,9 @@ const {
   metrics,
   navigation,
   positions,
-} = repository.getSnapshot();
-const exceptions = repository.getExceptions();
-const auditEvents = repository.getAuditEvents();
+} = initialSnapshot;
+let exceptions = repository?.getExceptions() || [];
+let auditEvents = repository?.getAuditEvents() || [];
 const initialContext = readContext(window.location.search);
 const initialParams = new URLSearchParams(window.location.search);
 const requestedView = initialParams.get('view');
@@ -50,6 +64,12 @@ const state = {
     hasRun: false,
     errors: {},
   },
+  dataReady: demoMode,
+  dataStatus: demoMode ? 'demo' : 'loading',
+  dataError: null,
+  snapshotTime: demoMode ? '09:42' : '—',
+  sourceType: demoMode ? 'demo' : null,
+  marketFunds: null,
 };
 
 const iconPaths = {
@@ -96,6 +116,17 @@ function formatContextDate(value) {
 
 function statusBadge(label, tone = 'neutral') {
   return `<span class="status-badge status-${tone}"><span class="status-dot"></span>${escapeHtml(label)}</span>`;
+}
+
+function dataStatusLabel() {
+  if (state.dataStatus === 'demo') return 'Demo';
+  if (state.dataStatus === 'live') return 'Live';
+  if (state.dataStatus === 'loading') return 'Loading';
+  return 'Unavailable';
+}
+
+function metricStatus(metric) {
+  return demoMode ? 'Demo' : metric.status;
 }
 
 function severityBadge(severity) {
@@ -153,6 +184,51 @@ function renderDriverRow(driver) {
   `;
 }
 
+const marketFundFields = [
+  { key: 'investorDeposit', label: '투자자예탁금', english: 'Investor deposits', kind: 'amount' },
+  { key: 'derivativesDeposit', label: '장내파생상품 거래 예수금', english: 'Derivatives deposits', kind: 'amount' },
+  { key: 'rpBalance', label: '대고객 RP 매도잔고', english: 'Customer RP balance', kind: 'amount' },
+  { key: 'receivables', label: '위탁매매 미수금', english: 'Brokerage receivables', kind: 'amount' },
+  { key: 'forcedSaleAmount', label: '실제 반대매매금액', english: 'Forced-sale amount', kind: 'amount' },
+  { key: 'forcedSaleRatio', label: '미수금 대비 반대매매비중', english: 'Forced-sale ratio', kind: 'percent' },
+];
+
+function marketFundValue(field, row) {
+  if (field.kind === 'percent') return `${row[field.key].toFixed(1)}%`;
+  return formatContextAmount(row[field.key] * 1e6, state.context.currency);
+}
+
+function renderMarketFunds(snapshot) {
+  const latest = snapshot.latest;
+  return `
+    <section class="mini-kpi-grid">${marketFundFields.map((field) => `
+      <article class="mini-kpi">
+        <span>${escapeHtml(field.label)}</span>
+        <strong>${marketFundValue(field, latest)}</strong>
+        <small>${escapeHtml(field.english)} · ${field.kind === 'percent' ? '%' : snapshot.unit}</small>
+      </article>
+    `).join('')}</section>
+    <section class="panel table-panel">
+      <div class="panel-header">
+        <div><span class="eyebrow">FREESIS · MARKET FUNDS</span><h2>Daily market funds</h2></div>
+        <span class="compare-label">${escapeHtml(snapshot.asOf)} · ${escapeHtml(snapshot.snapshotTime)} KST</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Date</th>${marketFundFields.map((field) => `<th class="align-right">${escapeHtml(field.label)}</th>`).join('')}</tr></thead>
+          <tbody>${snapshot.series.slice(0, 20).map((row) => `
+            <tr>
+              <td>${escapeHtml(row.date)}</td>
+              ${marketFundFields.map((field) => `<td class="align-right numeric">${marketFundValue(field, row)}</td>`).join('')}
+            </tr>
+          `).join('')}</tbody>
+        </table>
+      </div>
+      <div class="audit-note">${icon('info')} Source: ${escapeHtml(snapshot.source.name)} · priority ${snapshot.source.priority} · ${escapeHtml(snapshot.source.collectionMethod)} · <a href="https://freesis.kofia.or.kr/stat/FreeSIS.do?parentDivId=${encodeURIComponent(snapshot.source.parentDivId)}&serviceId=${encodeURIComponent(snapshot.source.serviceId)}" target="_blank" rel="noreferrer">Open source registry</a></div>
+    </section>
+  `;
+}
+
 function render() {
   syncUrl();
   const filteredExceptions = filterExceptions(exceptions, state.exceptionFilters);
@@ -197,7 +273,7 @@ function renderMasthead() {
       </div>
       <div class="masthead-actions">
         <button class="icon-button" data-action="refresh" title="Refresh snapshot" aria-label="Refresh snapshot">${icon('refresh')}</button>
-        <button class="freshness-chip" data-action="show-status">${icon('info')} <span>Fresh</span><strong>09:42</strong></button>
+        <button class="freshness-chip" data-action="show-status">${icon('info')} <span>${dataStatusLabel()}</span>${state.snapshotTime === '—' ? '' : `<strong>${state.snapshotTime}</strong>`}</button>
         <div class="user-menu">
           <span class="avatar">JK</span>
           <div><strong>Jiho Kim</strong><small>Operator</small></div>
@@ -223,8 +299,8 @@ function renderSidebar(activeId) {
       </nav>
       <div class="sidebar-spacer"></div>
       <div class="sidebar-footer">
-        <div class="environment-line"><span class="environment-dot"></span> Demo snapshot</div>
-        <div class="sidebar-version">v0.1 · 11 Aug 2026</div>
+        <div class="environment-line"><span class="environment-dot"></span> ${dataStatusLabel()} source</div>
+        <div class="sidebar-version">${state.sourceType === 'market-funds' ? 'FreeSIS · service STATSCU0100000060' : 'v0.1 · 11 Aug 2026'}</div>
       </div>
     </aside>
   `;
@@ -239,12 +315,13 @@ function renderPageHeader(activeNav) {
     scenario: '가정값을 바꿔 손익·수익·담보 영향을 비교합니다.',
     admin: 'Metric 정의, 데이터 상태, 설정 변경 감사 이력을 관리합니다.',
   };
+  const marketFundsView = state.sourceType === 'market-funds';
   return `
     <div class="page-header">
       <div>
-        <div class="breadcrumb"><span>Workbench</span><span>/</span><strong>${activeNav.label}</strong></div>
-        <h1>${activeNav.caption}</h1>
-        <p>${descriptions[activeNav.id]}</p>
+        <div class="breadcrumb"><span>Workbench</span><span>/</span><strong>${marketFundsView ? 'Market data' : activeNav.label}</strong></div>
+        <h1>${marketFundsView ? 'FreeSIS Market Data' : activeNav.caption}</h1>
+        <p>${marketFundsView ? 'FreeSIS 공식 원자료에서 수집한 국내 자본시장 자금 지표입니다.' : descriptions[activeNav.id]}</p>
       </div>
       <div class="page-actions">
         <button class="button button-secondary" data-action="save-view">Save view</button>
@@ -291,16 +368,27 @@ function renderContextBar() {
 }
 
 function renderDataStatus() {
+  const statusMessage = state.dataStatus === 'demo'
+    ? `Demo data only · Use a live snapshot source for production values.`
+    : state.dataStatus === 'live'
+      ? `${state.sourceType === 'market-funds' ? 'FreeSIS market data' : 'Live data'} through ${formatContextDate(state.context.asOf)} ${state.snapshotTime} KST.`
+      : state.dataStatus === 'loading'
+        ? 'Connecting to the live snapshot source…'
+        : `Live data unavailable · ${state.dataError}`;
   return `
     <div class="data-banner">
       <span class="banner-icon">${icon('info')}</span>
-      <div><strong>Official daily snapshot</strong><span> · Data through ${formatContextDate(state.context.asOf)} 09:42 KST. Intraday settlement and exception data are refreshed every 15 minutes.</span></div>
+      <div><strong>${dataStatusLabel()} snapshot</strong><span> · ${escapeHtml(statusMessage)}</span></div>
       <button data-action="show-status">View data status ${icon('external')}</button>
     </div>
   `;
 }
 
 function renderView(filteredExceptions) {
+  if (!state.dataReady) {
+    return `<section class="panel empty-state data-unavailable">${icon('info')}<strong>${state.dataStatus === 'loading' ? 'Loading live data' : 'Live data is unavailable'}</strong><span>${escapeHtml(state.dataError || 'No live snapshot has been loaded.')}</span><small>Connect the verified source or configure SNAPSHOT_URL for an internal snapshot.</small></section>`;
+  }
+  if (state.sourceType === 'market-funds') return renderMarketFunds(state.marketFunds);
   if (state.view === 'portfolio') return renderPortfolio();
   if (state.view === 'operations') return renderOperations(filteredExceptions);
   if (state.view === 'lending') return renderLending();
@@ -320,7 +408,7 @@ function renderCockpit(filteredExceptions) {
         <article class="metric-card ${state.activeMetric === metric.id ? 'selected' : ''}" data-metric="${metric.id}" tabindex="0">
           <div class="metric-card-top">
             <div class="metric-label"><span class="metric-icon tone-${metric.tone}">${icon(metric.icon)}</span><span>${metric.koreanLabel}<small>${metric.label}</small></span></div>
-            ${statusBadge(metric.status, metric.status === 'Official' ? 'official' : metric.status === 'Intraday' ? 'intraday' : 'fresh')}
+            ${statusBadge(metricStatus(metric), metricStatus(metric) === 'Demo' ? 'neutral' : metric.status === 'Official' ? 'official' : metric.status === 'Intraday' ? 'intraday' : 'fresh')}
           </div>
           <div class="metric-value">${metricValue(metric)}</div>
           <div class="metric-meta">${deltaMarkup(metric)}<button class="why-button" data-explain="${metric.id}">Why? <span>↗</span></button></div>
@@ -479,19 +567,22 @@ function renderLending() {
   const totalHolding = lendingRows.reduce((sum, row) => sum + row.holding, 0);
   const totalOnLoan = lendingRows.reduce((sum, row) => sum + row.onLoan, 0);
   const totalAvailable = lendingRows.reduce((sum, row) => sum + row.available, 0);
-  const avgUtilization = (totalOnLoan / totalHolding) * 100;
+  const collateralCoverage = totalHolding
+    ? lendingRows.reduce((sum, row) => sum + (row.holding * row.collateral), 0) / totalHolding
+    : 0;
+  const collateralExceptions = filterExceptionsForMetric(exceptions, 'lending').length;
   return `
     <section class="mini-kpi-grid">${[
-      ['Holding balance', formatContextAmount(totalHolding, state.context.currency), 'Official'],
-      ['On loan', formatContextAmount(totalOnLoan, state.context.currency), `${avgUtilization.toFixed(1)}% utilization`],
-      ['Available balance', formatContextAmount(totalAvailable, state.context.currency), 'Across 5 securities'],
-      ['Collateral coverage', '99.4%', '1 Critical exception'],
+      ['Holding balance', formatContextAmount(totalHolding, state.context.currency), dataStatusLabel()],
+      ['On loan', formatContextAmount(totalOnLoan, state.context.currency), `${formatRatioPercent(totalOnLoan, totalHolding)} utilization`],
+      ['Available balance', formatContextAmount(totalAvailable, state.context.currency), `Across ${lendingRows.length} securities`],
+      ['Collateral coverage', `${collateralCoverage.toFixed(1)}%`, `${collateralExceptions} collateral exception${collateralExceptions === 1 ? '' : 's'}`],
     ].map(([label, value, sub]) => `<article class="mini-kpi"><span>${label}</span><strong>${value}</strong><small>${sub}</small></article>`).join('')}</section>
     <section class="explorer-grid">
       <article class="panel lending-chart"><div class="panel-header"><div><span class="eyebrow">OPPORTUNITY MAP</span><h2>Fee × available balance</h2></div><span class="compare-label">Size = holding value</span></div><div class="scatter">${lendingRows.map((row) => `<button class="scatter-dot ${row.collateral < 100 ? 'risk' : ''}" style="left:${Math.min(row.fee * 90, 92)}%;bottom:${Math.min(row.available / 1400000000, 88)}%" data-security="${row.security}" title="${row.security}">${row.security.split(' ')[0].slice(0, 2)}</button>`).join('')}<span class="axis-label axis-x">Fee benchmark →</span><span class="axis-label axis-y">Available balance</span></div><div class="chart-legend"><span><i class="legend-dot dot-positive"></i> Opportunity</span><span><i class="legend-dot dot-negative"></i> Collateral below 100%</span></div></article>
       <article class="panel lending-ranking"><div class="panel-header"><div><span class="eyebrow">RANKING</span><h2>Opportunity ranking</h2></div><button class="why-button" data-explain="lending">Why?</button></div><div class="ranking-list">${lendingRows.slice().sort((a, b) => b.fee * b.available - a.fee * a.available).map((row, index) => `<button class="ranking-row" data-security="${escapeHtml(row.security)}"><span class="rank">${String(index + 1).padStart(2, '0')}</span><span><strong>${escapeHtml(row.security)}</strong><small>${formatContextAmount(row.available, state.context.currency)} available · ${row.fee.toFixed(2)}% fee</small></span><b>${formatContextAmount(row.available * row.fee / 100 / 365, state.context.currency)}<small>/ day</small></b></button>`).join('')}</div></article>
     </section>
-    <section class="panel table-panel"><div class="panel-header"><div><span class="eyebrow">INVENTORY & COLLATERAL</span><h2>Inventory detail</h2></div><span class="compare-label">Intraday · 09:40 KST</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Security</th><th>Rating</th><th class="align-right">Holding</th><th class="align-right">On loan</th><th class="align-right">Available</th><th class="align-right">Utilization</th><th class="align-right">Fee</th><th class="align-right">Collateral</th><th>Counterparty</th></tr></thead><tbody>${lendingRows.map((row) => `<tr data-security="${escapeHtml(row.security)}" tabindex="0"><td><strong>${escapeHtml(row.security)}</strong></td><td>${escapeHtml(row.rating)}</td><td class="align-right numeric">${formatContextAmount(row.holding, state.context.currency)}</td><td class="align-right numeric">${formatContextAmount(row.onLoan, state.context.currency)}</td><td class="align-right numeric">${formatContextAmount(row.available, state.context.currency)}</td><td class="align-right numeric">${row.utilization.toFixed(1)}%</td><td class="align-right numeric">${row.fee.toFixed(2)}%</td><td class="align-right numeric ${row.collateral < 100 ? 'negative-value' : 'positive-value'}">${row.collateral.toFixed(1)}%</td><td>${escapeHtml(row.counterparty)}</td></tr>`).join('')}</tbody></table></div></section>
+    <section class="panel table-panel"><div class="panel-header"><div><span class="eyebrow">INVENTORY & COLLATERAL</span><h2>Inventory detail</h2></div><span class="compare-label">As-of · ${state.snapshotTime} KST</span></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Security</th><th>Rating</th><th class="align-right">Holding</th><th class="align-right">On loan</th><th class="align-right">Available</th><th class="align-right">Utilization</th><th class="align-right">Fee</th><th class="align-right">Collateral</th><th>Counterparty</th></tr></thead><tbody>${lendingRows.map((row) => `<tr data-security="${escapeHtml(row.security)}" tabindex="0"><td><strong>${escapeHtml(row.security)}</strong></td><td>${escapeHtml(row.rating)}</td><td class="align-right numeric">${formatContextAmount(row.holding, state.context.currency)}</td><td class="align-right numeric">${formatContextAmount(row.onLoan, state.context.currency)}</td><td class="align-right numeric">${formatContextAmount(row.available, state.context.currency)}</td><td class="align-right numeric">${row.utilization.toFixed(1)}%</td><td class="align-right numeric">${row.fee.toFixed(2)}%</td><td class="align-right numeric ${row.collateral < 100 ? 'negative-value' : 'positive-value'}">${row.collateral.toFixed(1)}%</td><td>${escapeHtml(row.counterparty)}</td></tr>`).join('')}</tbody></table></div></section>
   `;
 }
 
@@ -506,8 +597,14 @@ function renderScenario() {
     ['lendingRatio', 'Lending ratio', '%', 0, 100],
     ['haircut', 'Haircut', '%', 0, 20],
   ];
-  const currentPnl = -12480000000;
-  const { pnl: pnlImpact, revenuePerDay: revenueImpact, collateralCoverage: collateralImpact } = calculateScenarioImpact(scenario);
+  const currentPnl = metrics.find((metric) => metric.id === 'pnl').value;
+  const lendingBalance = metrics.find((metric) => metric.id === 'lending').value;
+  const currentRevenue = lendingRows.reduce((sum, row) => sum + ((row.available * row.fee) / 100 / 365), 0);
+  const scenarioHolding = lendingRows.reduce((sum, row) => sum + row.holding, 0);
+  const currentCoverage = scenarioHolding
+    ? lendingRows.reduce((sum, row) => sum + (row.holding * row.collateral), 0) / scenarioHolding
+    : 0;
+  const { pnl: pnlImpact, revenuePerDay: revenueImpact, collateralCoverage: collateralImpact } = calculateScenarioImpact(scenario, { lendingBalance });
   const assumptions = fields.map(([key, label, suffix, min, max]) => `
     <label class="assumption-row" for="scenario-${key}">
       <span>${label}<small>Allowed ${min} to ${max} ${suffix}</small></span>
@@ -524,7 +621,7 @@ function renderScenario() {
     <div class="simulation-banner"><span class="simulation-tag">SIMULATION</span><strong>Scenario Draft 03</strong><span>Base: ${escapeHtml(state.context.asOf)} · ${escapeHtml(state.context.portfolio)}</span><button data-action="reset-scenario">Reset assumptions</button></div>
     <section class="scenario-layout">
       <article class="panel assumptions-panel"><div class="panel-header"><div><span class="eyebrow">ASSUMPTIONS</span><h2>Market & lending shocks</h2></div><span class="status-badge status-scenario"><span class="status-dot"></span>Draft</span></div><div class="assumptions">${assumptions}</div><div class="form-actions"><button class="button button-secondary" data-action="reset-scenario">Reset</button><button class="button button-primary" data-action="run-scenario" ${validation.valid ? '' : 'disabled'}>Run scenario</button></div><div class="audit-note">${icon('info')} Scenario is indicative and never writes to official ledger or operations state.</div></article>
-      <article class="panel scenario-results"><div class="panel-header"><div><span class="eyebrow">RESULTS · INDICATIVE</span><h2>Current vs Scenario</h2></div>${scenario.hasRun ? statusBadge('Applied', 'scenario') : statusBadge('Not run', 'neutral')}</div><div class="result-table"><div class="result-head"><span>Metric</span><span>Current</span><span>Scenario</span><span>Delta</span></div>${[['P&L', formatContextAmount(currentPnl, state.context.currency), formatContextAmount(currentPnl + pnlImpact, state.context.currency), formatContextAmount(pnlImpact, state.context.currency)], ['Lending revenue / day', formatContextAmount(452000000, state.context.currency), formatContextAmount(452000000 + revenueImpact, state.context.currency), formatContextAmount(revenueImpact, state.context.currency)], ['Collateral coverage', '99.4%', `${(99.4 + collateralImpact).toFixed(1)}%`, `${collateralImpact.toFixed(1)} pp`]].map(([label, current, result, delta]) => `<div class="result-row"><strong>${label}</strong><span>${current}</span><span>${result}</span><b class="${delta.startsWith('-') ? 'negative-value' : 'positive-value'}">${delta}</b></div>`).join('')}</div><div class="scenario-callout">${icon('info')} Model: duration approximation · FX translation · simple fee/day-count. Full reprice is not included.</div></article>
+      <article class="panel scenario-results"><div class="panel-header"><div><span class="eyebrow">RESULTS · INDICATIVE</span><h2>Current vs Scenario</h2></div>${scenario.hasRun ? statusBadge('Applied', 'scenario') : statusBadge('Not run', 'neutral')}</div><div class="result-table"><div class="result-head"><span>Metric</span><span>Current</span><span>Scenario</span><span>Delta</span></div>${[['P&L', formatContextAmount(currentPnl, state.context.currency), formatContextAmount(currentPnl + pnlImpact, state.context.currency), formatContextAmount(pnlImpact, state.context.currency)], ['Lending revenue / day', formatContextAmount(currentRevenue, state.context.currency), formatContextAmount(currentRevenue + revenueImpact, state.context.currency), formatContextAmount(revenueImpact, state.context.currency)], ['Collateral coverage', `${currentCoverage.toFixed(1)}%`, `${(currentCoverage + collateralImpact).toFixed(1)}%`, `${collateralImpact.toFixed(1)} pp`]].map(([label, current, result, delta]) => `<div class="result-row"><strong>${label}</strong><span>${current}</span><span>${result}</span><b class="${delta.startsWith('-') ? 'negative-value' : 'positive-value'}">${delta}</b></div>`).join('')}</div><div class="scenario-callout">${icon('info')} Model: duration approximation · FX translation · simple fee/day-count. Full reprice is not included.</div></article>
     </section>
   `;
 }
@@ -535,7 +632,7 @@ function renderAdmin() {
       <article class="panel table-panel"><div class="panel-header"><div><span class="eyebrow">METRIC DICTIONARY</span><h2>Registered metrics <span class="count-badge">${metricDictionary.length}</span></h2></div><button class="button button-primary">Add metric</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Metric</th><th>Definition</th><th>Unit</th><th>Source</th><th>Version</th><th>Owner</th></tr></thead><tbody>${metricDictionary.map((row) => `<tr><td><strong>${row.metric}</strong><small>${row.id}</small></td><td class="definition-cell">${row.definition}</td><td>${row.unit}</td><td>${row.source}</td><td><span class="version-label">${row.version}</span></td><td>${row.owner}</td></tr>`).join('')}</tbody></table></div></article>
       <article class="panel audit-panel"><div class="panel-header"><div><span class="eyebrow">AUDIT TRAIL</span><h2>Recent activity</h2></div><button class="text-button">View all ${icon('external')}</button></div><div class="audit-list">${auditEvents.map((event) => `<div class="audit-row"><time>${event.time}</time><div><strong>${event.action}</strong><span>${event.actor} · ${event.target}</span></div><code>${event.result}</code></div>`).join('')}</div><div class="audit-note">${icon('info')} Audit events are append-only and retain before/after values for controlled updates.</div></article>
     </section>
-    <section class="mini-kpi-grid admin-status">${[['Data quality', 'Fresh', '7 / 7 sources within SLA'], ['Metric coverage', '100%', 'Must metrics have lineage'], ['Last snapshot', '09:42 KST', 'Official · 2026-08-11'], ['Access policy', 'RBAC active', 'Portfolio + role scope']].map(([label, value, sub]) => `<article class="mini-kpi"><span>${label}</span><strong>${value}</strong><small>${sub}</small></article>`).join('')}</section>
+    <section class="mini-kpi-grid admin-status">${[['Data quality', dataStatusLabel(), demoMode ? 'Synthetic values for local testing' : 'Live snapshot source'], ['Metric coverage', '100%', 'All loaded metrics have lineage'], ['Last snapshot', `${state.snapshotTime} KST`, `${demoMode ? 'Demo' : 'Live'} · ${state.context.asOf}`], ['Access policy', 'RBAC active', 'Portfolio + role scope']].map(([label, value, sub]) => `<article class="mini-kpi"><span>${label}</span><strong>${value}</strong><small>${sub}</small></article>`).join('')}</section>
   `;
 }
 
@@ -547,13 +644,13 @@ function renderExplainDrawer(metricId) {
   return `
     <div class="drawer-backdrop" data-action="close-drawer"></div>
     <aside class="drawer" role="dialog" aria-modal="true" aria-label="Explain metric">
-      <div class="drawer-header"><div><span class="eyebrow">EXPLAIN THIS NUMBER</span><h2>${metric.koreanLabel}</h2><p>${metricValue(metric)} · ${state.context.asOf} ${statusBadge(metric.status, metric.status === 'Official' ? 'official' : 'intraday')}</p></div><button class="icon-button" data-action="close-drawer" aria-label="Close explain drawer">${icon('close')}</button></div>
+      <div class="drawer-header"><div><span class="eyebrow">EXPLAIN THIS NUMBER</span><h2>${metric.koreanLabel}</h2><p>${metricValue(metric)} · ${state.context.asOf} ${statusBadge(metricStatus(metric), metricStatus(metric) === 'Demo' ? 'neutral' : metric.status === 'Official' ? 'official' : 'intraday')}</p></div><button class="icon-button" data-action="close-drawer" aria-label="Close explain drawer">${icon('close')}</button></div>
       <div class="drawer-body">
         <section class="drawer-section"><span class="drawer-label">DEFINITION</span><p>${metric.definition}</p></section>
         <section class="drawer-section"><span class="drawer-label">CALCULATION</span><code>${metric.formula}</code><small>Same metric definition and currency conversion are used for Current and Compare.</small></section>
         <section class="drawer-section"><span class="drawer-label">SYSTEM VALUES</span><div class="system-values">${Object.entries(metric.systemValues || {}).map(([system, value]) => `<div><span>${escapeHtml(system)}</span><strong>${formatContextAmount(value, state.context.currency, systemUnit)}</strong></div>`).join('')}</div></section>
         <section class="drawer-section"><span class="drawer-label">SOURCE & LINEAGE</span><div class="lineage"><div><span class="lineage-node node-source">1</span><span>Source snapshot<strong>${escapeHtml(metric.source)}</strong></span></div><i></i><div><span class="lineage-node node-transform">2</span><span>Semantic metric<strong>${escapeHtml(metric.formula)}</strong></span></div><i></i><div><span class="lineage-node node-view">3</span><span>Current view<strong>${escapeHtml(state.context.portfolio)} · ${escapeHtml(state.context.currency)}</strong></span></div></div></section>
-        <section class="drawer-section meta-grid"><div><span class="drawer-label">AS-OF</span><strong>${escapeHtml(state.context.asOf)} 09:42 KST</strong></div><div><span class="drawer-label">OWNER</span><strong>${escapeHtml(metric.owner)}</strong></div><div><span class="drawer-label">VERSION</span><strong>Metric definition v1.0</strong></div><div><span class="drawer-label">STATUS</span><strong>${statusBadge('Fresh', 'fresh')}</strong></div></section>
+        <section class="drawer-section meta-grid"><div><span class="drawer-label">AS-OF</span><strong>${escapeHtml(state.context.asOf)} ${state.snapshotTime} KST</strong></div><div><span class="drawer-label">OWNER</span><strong>${escapeHtml(metric.owner)}</strong></div><div><span class="drawer-label">VERSION</span><strong>Metric definition v1.0</strong></div><div><span class="drawer-label">STATUS</span><strong>${statusBadge(dataStatusLabel(), state.dataStatus === 'live' ? 'fresh' : 'neutral')}</strong></div></section>
       </div>
       <div class="drawer-footer"><button class="button button-secondary" data-action="close-drawer">Close</button><button class="button button-primary" data-view="portfolio">Open related records ${icon('external')}</button></div>
     </aside>
@@ -578,6 +675,71 @@ function showToast(message) {
   if (!region) return;
   region.innerHTML = `<div class="toast">${icon('info')} ${escapeHtml(message)}</div>`;
   window.setTimeout(() => { region.innerHTML = ''; }, 2800);
+}
+
+async function readSnapshotResponse(response) {
+  let payload;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    throw new Error(`Live snapshot response was not valid JSON: ${error.message}`);
+  }
+  if (!response.ok) {
+    throw new Error(payload?.error || `Live snapshot request failed with HTTP ${response.status}.`);
+  }
+  return validateLiveSnapshot(payload);
+}
+
+function applyLiveSnapshot(snapshot) {
+  if (snapshot.sourceType === 'market-funds') {
+    state.sourceType = 'market-funds';
+    state.marketFunds = snapshot;
+    state.context.asOf = snapshot.asOf;
+    state.snapshotTime = normalizeSnapshotTime(snapshot.snapshotTime);
+    return;
+  }
+
+  ({
+    cashflows,
+    checklist,
+    drivers,
+    lendingRows,
+    metricDictionary,
+    metrics,
+    positions,
+  } = snapshot);
+  exceptions = snapshot.exceptions;
+  auditEvents = snapshot.auditEvents;
+  state.sourceType = 'internal-snapshot';
+  state.marketFunds = null;
+  state.context.asOf = snapshot.asOf;
+  state.snapshotTime = normalizeSnapshotTime(snapshot.snapshotTime);
+}
+
+async function loadLiveSnapshot({ notify = false } = {}) {
+  state.dataStatus = 'loading';
+  state.dataReady = false;
+  state.dataError = null;
+  render();
+
+  try {
+    const response = await fetch('/api/snapshot', {
+      headers: { accept: 'application/json' },
+      cache: 'no-store',
+    });
+    const snapshot = await readSnapshotResponse(response);
+    applyLiveSnapshot(snapshot);
+    state.dataStatus = 'live';
+    state.dataReady = true;
+    render();
+    if (notify) showToast(`Live snapshot refreshed · ${state.snapshotTime} KST`);
+  } catch (error) {
+    state.dataStatus = 'error';
+    state.dataReady = false;
+    state.dataError = error instanceof Error ? error.message : 'Live snapshot could not be loaded.';
+    render();
+    if (notify) showToast(state.dataError);
+  }
 }
 
 let searchTimer;
@@ -714,10 +876,38 @@ const actionHandlers = {
     render();
   },
   refresh: () => {
-    showToast('Snapshot refresh requested · last successful load 09:42 KST');
+    if (!demoMode) {
+      void loadLiveSnapshot({ notify: true });
+      return;
+    }
+    ({
+      cashflows,
+      checklist,
+      drivers,
+      lendingRows,
+      metricDictionary,
+      metrics,
+      positions,
+    } = repository.refreshSnapshot());
+    state.snapshotTime = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Seoul',
+    }).format(new Date());
+    render();
+    showToast(`Demo snapshot refreshed · ${state.snapshotTime} KST`);
   },
   'show-status': () => {
-    showToast('All 7 sources are Fresh or within their SLA');
+    if (state.dataStatus === 'demo') {
+      showToast('Demo data only · no live source is connected');
+    } else if (state.dataStatus === 'error') {
+      showToast(state.dataError);
+    } else if (state.dataStatus === 'loading') {
+      showToast('Connecting to the live snapshot source');
+    } else {
+      showToast(`Live snapshot loaded · ${state.snapshotTime} KST`);
+    }
   },
   'saved-view': () => {
     showToast('Saved views are scoped to the current user');
@@ -745,6 +935,10 @@ const actionHandlers = {
     showToast('Scenario applied · no official data was changed');
   },
   'save-exception': (element) => {
+    if (!repository) {
+      showToast('Live snapshot updates require a configured write API');
+      return;
+    }
     const id = element.dataset.exceptionId || state.selectedException;
     const reason = root.querySelector('#reason')?.value.trim();
     const owner = root.querySelector('#owner')?.value;
@@ -757,6 +951,7 @@ const actionHandlers = {
       const result = repository.updateException(id, { reason, owner, status });
       state.selectedException = id;
       render();
+      if (!demoMode) void loadLiveSnapshot();
       showToast(`Update saved · Audit ID ${result.auditId}`);
     } catch (error) {
       showToast(`Unable to save update: ${error.message}`);
@@ -789,3 +984,4 @@ function handleAction(action, element) {
 }
 
 render();
+if (!demoMode) void loadLiveSnapshot();

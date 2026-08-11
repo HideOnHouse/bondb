@@ -8,8 +8,38 @@ Investment Operations Intelligence Workbench for bond operations.
 npm run dev
 ```
 
-Open <http://localhost:4173>. The app uses a deterministic demo snapshot so the
-core investigation flows can be exercised without internal data sources.
+Open <http://localhost:4173>. By default, the app fetches the verified FreeSIS
+market-funds XHR and displays official source data. If that source is
+unavailable, the app shows a data-unavailable state rather than inventing
+financial values.
+
+## Live data
+
+The default application does **not** display the bundled demo numbers. It calls
+the verified FreeSIS request for `증시자금추이`:
+
+```
+POST https://freesis.kofia.or.kr/meta/getMetaDataList.do
+OBJ_NM=STATSCU0100000060BO
+```
+
+The response is retained as source-priority `0`, with the service registry
+metadata shown in the UI. To use an internal portfolio snapshot instead,
+configure the server with a live snapshot endpoint:
+
+```bash
+SNAPSHOT_URL=https://your-internal-service.example/snapshot npm run dev
+```
+
+An internal endpoint must return JSON with `asOf`, `snapshotTime`, and these arrays:
+`cashflows`, `checklist`, `drivers`, `lendingRows`, `metricDictionary`, `metrics`,
+`positions`, `exceptions`, and `auditEvents`. Refresh requests the endpoint again
+with `Cache-Control: no-store`. If either source is missing or invalid, the UI
+shows an unavailable state instead of presenting synthetic values.
+
+For local-only UI testing, explicitly use
+<http://localhost:4173/?demo=true>. Demo mode is labeled as demo data and is
+never presented as live or official data.
 
 ## Deploy on EC2
 

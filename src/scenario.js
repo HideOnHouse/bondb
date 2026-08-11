@@ -20,10 +20,10 @@ export function validateScenario(input) {
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
-export function calculateScenarioImpact(input) {
+export function calculateScenarioImpact(input, { lendingBalance = 394800000000 } = {}) {
   return {
     pnl: (input.rate * 420000000) + (input.spread * -210000000) + ((input.fx / 100) * 8500000000),
-    revenuePerDay: ((input.fee / 10_000) * 394800000000 * (input.lendingRatio / 100)) / 365,
+    revenuePerDay: ((input.fee / 10_000) * lendingBalance * (input.lendingRatio / 100)) / 365,
     collateralCoverage: input.haircut * -1.8,
   };
 }

@@ -60,9 +60,15 @@ export function formatContextAmount(value, currency = 'KRW', unit = 'KRW') {
 }
 
 export function formatSignedPercent(value, total) {
-  if (!total) return '—';
+  if (!Number.isFinite(value) || !Number.isFinite(total) || total === 0) return '—';
   const percentage = (value / Math.abs(total)) * 100;
   return `${percentage >= 0 ? '+' : ''}${percentage.toFixed(1)}%`;
+}
+
+export function formatRatioPercent(value, total, digits = 1) {
+  if (!Number.isFinite(value) || !Number.isFinite(total)) return '—';
+  if (total === 0) return value === 0 ? `${(0).toFixed(digits)}%` : '—';
+  return `${((value / Math.abs(total)) * 100).toFixed(digits)}%`;
 }
 
 export function formatSignedNumber(value, digits = 1) {
