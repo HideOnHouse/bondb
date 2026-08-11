@@ -1,9 +1,8 @@
 # Investment Operations Intelligence Workbench 구현 TODO
 
-이 문서는
-`Investment_Operations_Intelligence_Workbench_Design_Document_KR.md` v0.9를 실제
-제품으로 구현하기 위한 작업 목록이다. 설계 문서의 요구사항 ID를 유지하여 구현,
-테스트, 사용자 승인(UAT)을 추적한다.
+이 문서는 [Investment Operations Intelligence Workbench 설계 문서](./design-document.md)
+v0.9를 실제 제품으로 구현하기 위한 작업 목록이다. 설계 문서의 요구사항 ID를
+유지하여 구현, 테스트, 사용자 승인(UAT)을 추적한다.
 
 ## 구현 원칙
 
@@ -96,13 +95,15 @@
 - [ ] 장부가, 평가손익, Expected Settlement, Settlement Fail,
       Lending Utilization, Expected Lending Revenue, Collateral Coverage를
       첫 Metric Dictionary로 등록한다.
+- [ ] Lending Utilization과 Collateral Coverage의 0 분모는 `NULL`/N/A로 처리하고
+      대여 Fee 단위, Day-count, FX/As-of, post-haircut 기준을 Metric 버전에 고정한다.
 - [ ] Admin이 Metric 정의, 대사 규칙, threshold, Source를 관리하는 설정 모델과
       승인/버전 이력을 구현한다. `[FR-029]`
 
 ### API/BFF 공통 기반
 
-- [ ] `POST /analytics/query`에 metric, groupBy, filters, compare 검증과 권한
-      필터를 구현한다.
+- [ ] `POST /analytics/query`에 asOf, portfolio, currency, metric, 허용된
+      dimensions/aggregation, filters, compare 검증과 권한 필터를 구현한다.
 - [ ] `GET /positions/{securityId}`에 기준일별 position과 transaction history를
       구현한다.
 - [ ] 종목명, ISIN, 거래 ID, 전표 ID, 상대방 통합검색과 권한 필터를 구현한다.
@@ -136,8 +137,8 @@
       `[NFR-009]`
 - [ ] 권한별 허용/거부/마스킹 통합 테스트를 통과한다.
 - [ ] Backfill과 데이터 지연이 Snapshot 또는 최신성 상태를 훼손하지 않는다.
-- [ ] 대표 데이터 규모로 Cockpit P95 3초, drill-down P95 2초 달성 가능성을
-      성능 테스트로 확인한다. `[NFR-001] [NFR-002]`
+- [ ] 대표 데이터 규모의 semantic query 부하 하네스와 성능 baseline을 확정한다.
+      `[NFR-002]`
 
 ## Phase 2 — Core Analytics
 
@@ -185,6 +186,8 @@
 - [ ] 모든 Must Metric의 Explain 필수 항목이 누락 없이 표시된다. `[AC-06]`
 - [ ] 핵심 KPI에서 예외 원인 또는 원천 거래까지 평균 4 interaction 이내다.
       `[NFR-010]`
+- [ ] 대표 데이터 규모로 Cockpit P95 3초, 일반 drill-down P95 2초를 달성한다.
+      `[NFR-001] [NFR-002] [AC-08]`
 
 ## Phase 3 — Operations MVP
 
@@ -209,8 +212,10 @@
 - [ ] New/Investigating/Waiting/Resolved/Waived 상태 전이를 권한별로 검증한다.
 - [ ] Waived 변경은 사유와 승인자를 필수로 하고 Audit ID를 반환한다.
 - [ ] 예상/실제 차이에서 거래 단위까지 drill-through한다. `[FR-013]`
-- [ ] `GET /exceptions`와 `PATCH /exceptions/{id}`를 구현한다.
-- [ ] 동시 수정 충돌을 탐지하고 최신 상태를 덮어쓰지 않게 한다.
+- [ ] `GET /exceptions`와 원인 유형, 담당자, 상태, 메모, 처리기한, Waived
+      사유/승인자를 변경하는 `PATCH /exceptions/{id}`를 구현한다.
+- [ ] `version`/`If-Match` 기반 충돌 탐지와 412 응답으로 최신 상태를 덮어쓰지
+      않게 한다.
 
 ### Closing
 
@@ -280,8 +285,12 @@
 
 - [ ] 사용자 context, layout, filters, sort, chart 구성을 저장/재호출한다.
       `[FR-026]`
-- [ ] `POST /views`와 사용자별 Saved View 목록/수정/삭제 API를 구현한다.
-- [ ] 현재 권한과 최신 Metric 정의를 적용하면서 저장 당시 context를 재현한다.
+- [ ] `GET /views`, `POST /views`, `GET/PATCH/DELETE /views/{id}`와 소유자 기반
+      Saved View lifecycle 권한을 구현한다.
+- [ ] 조회 시 현재 권한을 재평가하되 저장 당시 Metric 정의 버전과 Snapshot/data
+      버전을 고정하여 context를 재현한다.
+- [ ] 최신 Metric 정의로의 전환은 영향 차이를 보여 주는 명시적 migration으로
+      제공하고 원본 Saved View 버전을 보존한다.
 - [ ] 현재 분석 context를 Excel/CSV/PDF/이미지로 Export한다. `[FR-027]`
 - [ ] Export에 As-of, filters, Metric 정의 버전, 생성자, 생성시각을 포함한다.
 - [ ] 대용량/민감정보 Export를 권한과 정책으로 제한하고 감사로그를 기록한다.
@@ -370,4 +379,3 @@
 | FR-030 Audit | Must | 1/3 | [ ] |
 | FR-031 Data Quality Status | Must | 1 | [ ] |
 | FR-032 Context Link Sharing | Could | 5 | [ ] |
-
