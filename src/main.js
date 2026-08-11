@@ -147,7 +147,7 @@ function formatSourceValue(value) {
 function syncUrl() {
   const params = new URLSearchParams();
   params.set('asOf', state.context.asOf);
-  if (state.sourceType !== 'market-funds') {
+  if (state.view !== 'market-funds' && state.sourceType !== 'market-funds') {
     params.set('portfolio', state.context.portfolio);
     params.set('currency', state.context.currency);
     params.set('compare', state.context.compare);
@@ -309,7 +309,7 @@ function renderPageHeader(activeNav) {
     lending: '대여 가능 잔고, 수익 기회, 담보와 상대방 리스크를 확인합니다.',
     admin: 'Metric 정의, 데이터 상태, 설정 변경 감사 이력을 관리합니다.',
   };
-  const marketFundsView = state.sourceType === 'market-funds';
+  const marketFundsView = state.sourceType === 'market-funds' || activeNav.id === 'market-funds';
   const sourceName = state.source?.name || 'official source';
   const fallbackCopy = state.source?.isFallback ? ' Official fallback is active.' : '';
   return `
@@ -328,7 +328,7 @@ function renderPageHeader(activeNav) {
 }
 
 function renderContextBar() {
-  const publicMarketFunds = state.sourceType === 'market-funds';
+  const publicMarketFunds = state.view === 'market-funds' || state.sourceType === 'market-funds';
   return `
     <section class="context-bar" aria-label="Analysis context">
       <div class="context-field">
@@ -654,7 +654,9 @@ function applyLiveSnapshot(snapshot) {
     state.marketFunds = snapshot;
     navigation = publicNavigation;
     state.view = 'market-funds';
-    state.context.asOf = snapshot.asOf;
+    if (!findMarketFundsObservation(snapshot, state.context.asOf)) {
+      state.context.asOf = snapshot.asOf;
+    }
     state.snapshotTime = normalizeSnapshotTime(snapshot.snapshotTime);
     return;
   }

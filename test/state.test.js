@@ -14,7 +14,7 @@ import {
 } from '../src/state.js';
 import { explainMetricForException, filterExceptionsForMetric, statusTone } from '../src/operations.js';
 import { normalizeSnapshotTime, validateLiveSnapshot } from '../src/live.js';
-import { fetchMarketFunds } from '../src/market-funds-source.js';
+import { fetchMarketFunds, kstDateRange } from '../src/market-funds-source.js';
 import {
   findMarketFundsObservation,
   normalizeFscMarketFunds,
@@ -75,6 +75,12 @@ test('readContext rejects unsafe or unsupported URL state', () => {
 test('context defaults to the current Asia/Seoul calendar date', () => {
   assert.equal(currentKstDate(new Date('2026-08-11T15:00:00.000Z')), '2026-08-12');
   assert.equal(readContext('?asOf=not-a-date').asOf, currentKstDate());
+});
+
+test('FreeSIS range clamps month-end dates when subtracting three months', () => {
+  const range = kstDateRange(new Date('2026-05-30T15:00:00.000Z'));
+  assert.equal(range.start, '20260228');
+  assert.equal(range.end, '20260531');
 });
 
 test('live snapshot validation rejects incomplete or stale-shaped data', () => {

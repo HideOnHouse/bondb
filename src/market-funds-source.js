@@ -23,12 +23,17 @@ function formatKstParts(date = new Date()) {
 
 export function kstDateRange(date = new Date()) {
   const parts = formatKstParts(date);
-  const end = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
-  end.setUTCMonth(end.getUTCMonth() - 3);
+  const year = Number(parts.year);
+  const month = Number(parts.month) - 1;
+  const day = Number(parts.day);
+  const targetMonthIndex = (year * 12) + month - 3;
+  const targetYear = Math.floor(targetMonthIndex / 12);
+  const targetMonth = targetMonthIndex % 12;
+  const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
   const start = [
-    end.getUTCFullYear(),
-    String(end.getUTCMonth() + 1).padStart(2, '0'),
-    String(end.getUTCDate()).padStart(2, '0'),
+    targetYear,
+    String(targetMonth + 1).padStart(2, '0'),
+    String(Math.min(day, daysInTargetMonth)).padStart(2, '0'),
   ].join('');
   return {
     start,
