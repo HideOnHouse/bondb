@@ -149,7 +149,7 @@ flowchart TB
 | FR-024 | Explain            | 시스템별 값(운용/회계/수탁)과 차이를 한 화면에 표시                               | Must         |
 | FR-025 | Search             | 종목명/ISIN/거래ID/전표ID/상대방 통합검색                                         | Must         |
 | FR-026 | Saved View         | 사용자 필터·정렬·차트 구성을 저장하고 재호출                                      | Should       |
-| FR-027 | Export             | 현재 분석 컨텍스트를 Excel/CSV/PDF 또는 이미지로 내보내기                         | Should       |
+| FR-027 | Export             | 현재 분석 컨텍스트를 Excel, CSV, PDF, 이미지의 네 형식으로 내보내기               | Should       |
 | FR-028 | Alert              | 금액/건수/임계치/마감시간 기반 알림 규칙 설정                                     | Should       |
 | FR-029 | Admin              | Metric 정의, 대사 규칙, threshold, 데이터 source 설정 관리                        | Must         |
 | FR-030 | Audit              | 예외 상태 변경, Export, 설정 변경, 수동 보정 내역 기록                            | Must         |
@@ -190,7 +190,7 @@ flowchart TB
 | NFR-006 | 보안          | SSO, 최소권한 RBAC, 데이터영역/포트폴리오별 접근통제                | read/write 분리           |
 | NFR-007 | 감사          | 조회 제외 주요 상태변경/설정변경/Export에 사용자·시각·전후값 기록   | tamper-evident 권장       |
 | NFR-008 | 개인정보/기밀 | 민감 거래/상대방 데이터는 권한에 따라 마스킹/제한                   | 로그에도 최소화           |
-| NFR-009 | 설명가능성    | 주요 Metric 100%에 정의·계산식·source·as-of 제공                    | Lineage coverage KPI      |
+| NFR-009 | 설명가능성    | 각 출시 Phase의 해당 범위로 승인된 주요 Metric 100%에 정의·계산식·source·as-of 제공 | Lineage coverage KPI |
 | NFR-010 | 사용성        | 핵심 예외 원인까지 평균 4 interaction 이내 도달 목표                | UX telemetry로 측정       |
 | NFR-011 | 접근성        | 키보드 탐색, 명확한 focus, 색상 외 상태표현, 최소 대비 준수         | WCAG 2.1 AA 지향          |
 | NFR-012 | 브라우저      | 사내 표준 Chromium 기반 최신 2개 버전 지원                          | 해상도 1440px 우선        |
@@ -290,15 +290,20 @@ sequenceDiagram
     participant UI as Web UI
     participant API as Analytics API
     participant SEM as Semantic Layer
+    participant REC as Reconciliation Engine
     participant DM as Data Mart
     participant LIN as Lineage
 
     U->>UI: Morning Cockpit 조회
     UI->>API: 기준일 · 포트폴리오 · Compare 조건
-    API->>SEM: KPI + Exception 요청
+    API->>SEM: KPI + Driver 요청
     SEM->>DM: Metric/차원 기반 집계
     DM-->>SEM: 집계 결과
     SEM-->>API: KPI + Driver
+    API->>REC: Exception Summary 요청
+    REC->>DM: 대사 결과/상태 및 금액 영향 조회
+    DM-->>REC: Exception 데이터
+    REC-->>API: Severity·금액영향·마감기한별 Action Queue
     API-->>UI: 화면 모델 반환
     UI-->>U: KPI / Heatmap / Waterfall 표시
 
@@ -452,7 +457,7 @@ sequenceDiagram
 | PATCH /exceptions/{id}          | 예외 workflow 변경                  | causeType, status, owner, comment, dueAt, waiverReason, approverId, version/If-Match                    |
 | GET /metrics/{metricId}/explain | 정의·산식·source·lineage            | asOf, context, metricVersion                                                                            |
 | POST /scenario/run              | 가정 기반 영향도 계산               | shocks, portfolio, asOf, currency, modelVersion                                                         |
-| GET /lending/opportunities      | 대여 후보/fee/inventory             | asOf, portfolio, currency, filters, ranking                                                             |
+| GET /lending/opportunities      | 대여 후보/fee/inventory             | asOf, portfolio, currency, filters; ranking은 Phase 4에서 추가                                          |
 | GET /views                      | 사용자 Saved View 목록              | owner, cursor                                                                                           |
 | POST /views                     | Saved View 저장                     | context, layout, filters, metricVersions, snapshotVersion                                               |
 | GET /views/{id}                 | Saved View 조회                     | id                                                                                                      |
@@ -497,8 +502,31 @@ sequenceDiagram
 |--------------------|---------------------------------------------------|-----------------------------------------------|
 | Data Status        | Fresh / Delayed / Partial / Failed                | 화면 상단 및 Metric 수준에 최신성 상태 노출   |
 | Exception Severity | Info / Warning / High / Critical                  | 금액영향·마감·규칙 위반 유형으로 산정         |
-| Workflow Status    | New / Investigating / Waiting / Resolved / Waived | Waived는 사유·승인자 필수                     |
+| Workflow Status    | New / Investigating / Waiting / Resolved / Waived | 아래 전이표와 권한 규칙 적용                  |
 | Scenario Status    | Draft / Applied / Saved                           | Applied 결과는 운영 수치와 혼동되지 않게 표시 |
+
+### 11.1 Exception workflow 전이 및 권한
+
+모든 전이는 예외의 현재 `version`을 검증하며, 성공 시 새 version과 Audit ID를
+반환한다. 별도 명시가 없는 한 Viewer와 Admin은 운영 예외 상태를 변경할 수 없다.
+
+| **현재 상태** | **다음 상태** | **허용 역할**       | **필수 조건**                         |
+|---------------|---------------|---------------------|---------------------------------------|
+| New           | Investigating | Operator, Manager   | 담당자 지정                           |
+| Investigating | Waiting       | Operator, Manager   | 대기 사유 또는 외부 확인 포인트       |
+| Investigating | Resolved      | Operator, Manager   | 원인 유형, 처리 메모, 해결 증적        |
+| Waiting       | Investigating | Operator, Manager   | 재개 사유                              |
+| Waiting       | Resolved      | Operator, Manager   | 원인 유형, 처리 메모, 해결 증적        |
+| Resolved      | Investigating | Operator, Manager   | 재오픈 사유                            |
+| New           | Waived        | Manager             | waiverReason, 승인자                  |
+| Investigating | Waived        | Manager             | waiverReason, 승인자                  |
+| Waiting       | Waived        | Manager             | waiverReason, 승인자                  |
+| Resolved      | Waived        | Manager             | waiverReason, 승인자                  |
+| Waived        | Investigating | Manager             | 재오픈 사유 및 Waived 철회 증적        |
+
+`New → Resolved` 같은 조사 없는 직접 해결과 `Waived`로의 Operator 변경은 허용하지
+않는다. `approverId`는 Manager 권한과 해당 데이터 범위를 가져야 하며, Waived
+변경의 사유·승인자·전후 상태는 감사로그에 필수로 기록한다.
 
 # 12. 테스트 및 수용 기준
 
@@ -509,14 +537,15 @@ sequenceDiagram
 | AC-03  | Compare            | 비교 기준 변경 시 모든 연결 뷰가 동일 컨텍스트로 갱신                |
 | AC-04  | Exception          | 테스트 불일치 데이터가 규칙에 따라 탐지되고 severity가 기대값과 일치 |
 | AC-05  | Audit              | 예외 상태 변경 후 사용자/시각/전후값/Audit ID 조회 가능              |
-| AC-06  | Explain            | Must Metric에 정의·산식·source·as-of가 모두 표시                     |
+| AC-06  | Explain            | 해당 출시 범위의 주요 Metric에 정의·산식·source·as-of가 모두 표시      |
 | AC-07  | Scenario           | 가정값 변경이 원장 데이터에 쓰기 작업을 발생시키지 않음              |
 | AC-08  | 성능               | 정의된 P95 응답시간 기준 만족                                        |
 
 # 13. 구현 범위 및 단계
 
 이 단계 번호는 `docs/TODO.md`의 실행 체크리스트와 동일하다. Phase 1~3의 모든 Must
-요구사항과 AC-01~AC-08을 통과해야 MVP로 출시하며, Should/Could는 후속 범위다.
+요구사항과 AC-01~AC-06, AC-08을 통과해야 MVP로 출시하며, Should/Could와 AC-07은
+후속 범위다.
 
 | **단계**                       | **범위**                                                                  | **목표**                      |
 |--------------------------------|---------------------------------------------------------------------------|-------------------------------|
@@ -553,7 +582,7 @@ sequenceDiagram
 | FR-021~022      | UC-06        | AC-07, Scenario model validation            | Scenario                   |
 | FR-023~024      | UC-07        | AC-06, lineage contract test                | Explain/Lineage            |
 | FR-025          | UC-02, UC-03 | 검색 정확도/권한/마스킹 E2E                 | Search                     |
-| FR-026~028      | UC-08        | Saved View lifecycle/Export/Alert test      | Platform                   |
+| FR-026~028      | UC-08        | Saved View lifecycle/네 형식 Export/Alert test | Platform                |
 | FR-029          | UC-03, UC-07 | 설정 승인/버전/권한/Audit test              | Admin                      |
 | FR-030          | UC-03, UC-08 | AC-05, tamper-evident Audit test            | Audit                      |
 | FR-031          | UC-01, UC-02 | Data Status ingestion/UI integration test   | Data Quality               |

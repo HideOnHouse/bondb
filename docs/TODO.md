@@ -133,8 +133,8 @@ v0.9를 실제 제품으로 구현하기 위한 작업 목록이다. 설계 문�
 
 - [ ] 동일 기준일/필터에서 Metric 결과가 재현되고 원천 합계와 대사된다.
       `[NFR-005]`
-- [ ] Must Metric 100%에 정의, 산식, Source, As-of 메타데이터가 등록된다.
-      `[NFR-009]`
+- [ ] 해당 Phase에서 출시하는 Metric Dictionary의 모든 주요 Metric 100%에 정의,
+      산식, Source, As-of 메타데이터가 등록된다. `[NFR-009]`
 - [ ] 권한별 허용/거부/마스킹 통합 테스트를 통과한다.
 - [ ] Backfill과 데이터 지연이 Snapshot 또는 최신성 상태를 훼손하지 않는다.
 - [ ] 대표 데이터 규모의 semantic query 부하 하네스와 성능 baseline을 확정한다.
@@ -183,7 +183,8 @@ v0.9를 실제 제품으로 구현하기 위한 작업 목록이다. 설계 문�
 - [ ] 상위 KPI와 drill-down 하위 합계가 rounding tolerance 내에서 일치한다.
       `[AC-02]`
 - [ ] Compare 변경 시 모든 연결 뷰가 동일 context로 갱신된다. `[AC-03]`
-- [ ] 모든 Must Metric의 Explain 필수 항목이 누락 없이 표시된다. `[AC-06]`
+- [ ] 해당 Phase에서 출시하는 모든 주요 Metric의 Explain 필수 항목이 누락 없이
+      표시된다. `[AC-06]`
 - [ ] 핵심 KPI에서 예외 원인 또는 원천 거래까지 평균 4 interaction 이내다.
       `[NFR-010]`
 - [ ] 대표 데이터 규모로 Cockpit P95 3초, 일반 drill-down P95 2초를 달성한다.
@@ -230,8 +231,8 @@ v0.9를 실제 제품으로 구현하기 위한 작업 목록이다. 설계 문�
 
 - [ ] 보유, 대여 중, 대여 가능 잔고와 평균/종목별 Fee 조회를 구현한다.
       `[FR-017]`
-- [ ] `GET /lending/opportunities`에 inventory, utilization, fee, ranking을
-      구현한다.
+- [ ] `GET /lending/opportunities`에 inventory, utilization, fee를 구현한다.
+      `[FR-017]`
 - [ ] 담보가치, 요구담보액, 담보비율, haircut, 부족액을 계산한다. `[FR-019]`
 - [ ] 상대방별 exposure와 concentration을 조회한다. `[FR-019]`
 - [ ] 담보 부족을 Critical 예외로 생성하고 Action Queue에 연결한다.
@@ -297,6 +298,7 @@ v0.9를 실제 제품으로 구현하기 위한 작업 목록이다. 설계 문�
 - [ ] 금액, 건수, 임계치, 마감시간 기반 알림 규칙과 전달 상태를 구현한다.
       `[FR-028]`
 - [ ] 중복 알림 억제, 확인, 재시도, 비활성화와 알림 감사 이력을 구현한다.
+- [ ] Phase 4의 Should 요구사항과 AC-07을 통과한 뒤 고도화 범위를 출시한다.
 
 ## Phase 5 — Optimization Backlog (`Could`/별도 승인)
 
@@ -353,7 +355,7 @@ v0.9를 실제 제품으로 구현하기 위한 작업 목록이다. 설계 문�
 - [ ] 보안 담당자가 RBAC, data scope, 마스킹, Audit, Export 정책을 승인한다.
 - [ ] 운영 담당자가 배포, rollback, backfill, 장애, 데이터 지연, 복구 runbook을
       승인한다.
-- [ ] 모든 Must 항목과 AC-01~AC-08을 통과한 뒤 MVP를 출시한다.
+- [ ] 모든 Must 항목과 AC-01~AC-06, AC-08을 통과한 뒤 MVP를 출시한다.
 
 ## 요구사항 추적 체크리스트
 
