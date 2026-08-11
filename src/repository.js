@@ -15,24 +15,31 @@ function cloneException(row) {
   return { ...row, systems: { ...row.systems } };
 }
 
+function cloneRows(rows) {
+  return rows.map((row) => ({ ...row }));
+}
+
 export function createDemoRepository() {
   const exceptionStore = exceptions.map(cloneException);
   const auditStore = auditEvents.map((event) => ({ ...event }));
   let auditSequence = 98219;
 
+  function readSnapshot() {
+    return {
+      cashflows: cloneRows(cashflows),
+      checklist: cloneRows(checklist),
+      drivers: cloneRows(drivers),
+      lendingRows: cloneRows(lendingRows),
+      metricDictionary: cloneRows(metricDictionary),
+      metrics: cloneRows(metrics),
+      navigation: cloneRows(navigation),
+      positions: cloneRows(positions),
+    };
+  }
+
   return {
-    getSnapshot() {
-      return {
-        cashflows,
-        checklist,
-        drivers,
-        lendingRows,
-        metricDictionary,
-        metrics,
-        navigation,
-        positions,
-      };
-    },
+    getSnapshot: readSnapshot,
+    refreshSnapshot: readSnapshot,
     getExceptions() {
       return exceptionStore;
     },

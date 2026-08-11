@@ -4,6 +4,7 @@ import {
   filterExceptions,
   formatCompactKrw,
   formatContextAmount,
+  formatRatioPercent,
   formatSignedPercent,
   readContext,
   readExceptionFilters,
@@ -13,6 +14,7 @@ import {
 import { createDemoRepository } from '../src/repository.js';
 import { calculateScenarioImpact, validateScenario } from '../src/scenario.js';
 import { explainMetricForException, filterExceptionsForMetric, statusTone } from '../src/operations.js';
+import { normalizeSnapshotTime, validateLiveSnapshot } from '../src/live.js';
 
 const rows = [
   { id: 'warning', severity: 'Warning', dueSort: 1, amount: 100 },
@@ -78,6 +80,14 @@ test('scenario lending fee treats basis points as basis points', () => {
   assert.equal(result.pnl, 85000000);
 });
 
+test('scenario lending revenue uses the loaded lending balance', () => {
+  const result = calculateScenarioImpact(
+    { rate: 0, spread: 0, fx: 0, fee: 5, lendingRatio: 100, haircut: 0 },
+    { lendingBalance: 100000000000 },
+  );
+  assert.equal(Math.round(result.revenuePerDay), 136986);
+});
+
 test('demo repository records exception updates with a new audit event', () => {
   const repository = createDemoRepository();
   const result = repository.updateException('EX-4821', {
@@ -88,6 +98,71 @@ test('demo repository records exception updates with a new audit event', () => {
   assert.equal(result.row.owner, 'M. Lee');
   assert.equal(result.row.status, 'Resolved');
   assert.equal(repository.getAuditEvents()[0].result, result.auditId);
+});
+
+test('repository refresh returns a fresh snapshot collection', () => {
+  const repository = createDemoRepository();
+  const first = repository.getSnapshot();
+  const refreshed = repository.refreshSnapshot();
+  assert.notEqual(refreshed.metrics, first.metrics);
+  assert.deepEqual(refreshed.metrics, first.metrics);
+});
+
+test('live snapshot validation rejects incomplete or stale-shaped data', () => {
+  assert.throws(() => validateLiveSnapshot({}), /missing: /);
+  assert.throws(() => validateLiveSnapshot({
+    cashflows: [],
+    checklist: [],
+    drivers: [],
+    lendingRows: [],
+    metricDictionary: [],
+    positions: [],
+    exceptions: [],
+    auditEvents: [],
+    metrics: ['book-value', 'pnl', 'settlement', 'settlement-fail', 'lending', 'critical'].map((id) => ({ id, value: 0 })),
+    asOf: '2026-08-11',
+    snapshotTime: 'not-a-time',
+  }), /snapshotTime/);
+});
+
+test('live snapshot validation accepts the documented contract', () => {
+  const snapshot = {
+    cashflows: [],
+    checklist: [],
+    drivers: [],
+    lendingRows: [],
+    metricDictionary: [],
+    metrics: ['book-value', 'pnl', 'settlement', 'settlement-fail', 'lending', 'critical'].map((id) => ({ id, value: 0 })),
+    positions: [],
+    exceptions: [],
+    auditEvents: [],
+    asOf: '2026-08-11',
+    snapshotTime: '09:42:18',
+  };
+  assert.equal(validateLiveSnapshot(snapshot), snapshot);
+  assert.equal(normalizeSnapshotTime(snapshot.snapshotTime), '09:42');
+});
+
+test('live snapshot validation accepts the verified FreeSIS market-funds shape', () => {
+  const row = {
+    date: '2026-08-10',
+    investorDeposit: 100718025,
+    derivativesDeposit: 42609036,
+    rpBalance: 109124645,
+    receivables: 1051270,
+    forcedSaleAmount: 40857,
+    forcedSaleRatio: 4.1,
+  };
+  const snapshot = {
+    sourceType: 'market-funds',
+    asOf: row.date,
+    snapshotTime: '18:01',
+    source: { name: 'FreeSIS', serviceId: 'STATSCU0100000060', priority: 0 },
+    unit: 'KRW million',
+    series: [row],
+    latest: row,
+  };
+  assert.equal(validateLiveSnapshot(snapshot), snapshot);
 });
 
 test('operations filters distinguish settlement failures from date mismatches', () => {
@@ -108,4 +183,11 @@ test('operations maps exception explanations and workflow tones', () => {
 test('formatSignedPercent handles compare values and zero safely', () => {
   assert.equal(formatSignedPercent(12500000000, 1272100000000), '+1.0%');
   assert.equal(formatSignedPercent(10, 0), '—');
+  assert.equal(formatSignedPercent(Number.NaN, 10), '—');
+});
+
+test('formatRatioPercent handles an empty live dataset without NaN', () => {
+  assert.equal(formatRatioPercent(0, 0), '0.0%');
+  assert.equal(formatRatioPercent(10, 0), '—');
+  assert.equal(formatRatioPercent(0, 100), '0.0%');
 });
