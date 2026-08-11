@@ -1,0 +1,13 @@
+{
+  "name": "bondb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check src/data.js && node --check src/main.js && node --check src/operations.js && node --check src/repository.js && node --check src/scenario.js && node --check src/state.js",
+    "test": "node --test",
+    "ci": "npm run check && npm test"
+  }
+}
