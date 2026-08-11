@@ -1,11 +1,9 @@
-import { createDemoRepository } from './repository.js';
-import { calculateScenarioImpact, validateScenario } from './scenario.js';
 import { explainMetricForException, filterExceptionsForMetric, statusTone } from './operations.js';
 import { normalizeSnapshotTime, validateLiveSnapshot } from './live.js';
-import { navigation as demoNavigation } from './data.js';
+import { findMarketFundsObservation } from './market-funds.js';
+import { privateNavigation, publicNavigation } from './ui-config.js';
 import {
   compareLabels,
-  contextSearch,
   filterExceptions,
   formatContextAmount,
   formatRatioPercent,
@@ -18,16 +16,13 @@ import {
 } from './state.js';
 
 const root = document.querySelector('#app');
-const demoMode = new URLSearchParams(window.location.search).get('demo') === 'true';
-const repository = demoMode ? createDemoRepository() : null;
-const initialSnapshot = repository?.getSnapshot() || {
+const initialSnapshot = {
   cashflows: [],
   checklist: [],
   drivers: [],
   lendingRows: [],
   metricDictionary: [],
   metrics: [],
-  navigation: demoNavigation,
   positions: [],
 };
 let {
@@ -37,15 +32,15 @@ let {
   lendingRows,
   metricDictionary,
   metrics,
-  navigation,
   positions,
 } = initialSnapshot;
-let exceptions = repository?.getExceptions() || [];
-let auditEvents = repository?.getAuditEvents() || [];
+let exceptions = [];
+let auditEvents = [];
+let navigation = publicNavigation;
 const initialContext = readContext(window.location.search);
 const initialParams = new URLSearchParams(window.location.search);
 const requestedView = initialParams.get('view');
-const initialView = navigation.some((item) => item.id === requestedView) ? requestedView : 'overview';
+const initialView = navigation.some((item) => item.id === requestedView) ? requestedView : 'market-funds';
 const state = {
   view: initialView,
   context: initialContext,
@@ -54,21 +49,12 @@ const state = {
   selectedException: null,
   explainMetric: null,
   selectedSecurity: null,
-  scenario: {
-    rate: -25,
-    spread: 10,
-    fx: 1,
-    fee: 5,
-    lendingRatio: 70,
-    haircut: 2,
-    hasRun: false,
-    errors: {},
-  },
-  dataReady: demoMode,
-  dataStatus: demoMode ? 'demo' : 'loading',
+  dataReady: false,
+  dataStatus: 'loading',
   dataError: null,
-  snapshotTime: demoMode ? '09:42' : '—',
-  sourceType: demoMode ? 'demo' : null,
+  snapshotTime: '—',
+  sourceType: null,
+  source: null,
   marketFunds: null,
 };
 
@@ -119,14 +105,14 @@ function statusBadge(label, tone = 'neutral') {
 }
 
 function dataStatusLabel() {
-  if (state.dataStatus === 'demo') return 'Demo';
+  if (state.dataStatus === 'fallback') return 'Official fallback';
   if (state.dataStatus === 'live') return 'Live';
   if (state.dataStatus === 'loading') return 'Loading';
   return 'Unavailable';
 }
 
 function metricStatus(metric) {
-  return demoMode ? 'Demo' : metric.status;
+  return metric.status;
 }
 
 function severityBadge(severity) {
@@ -159,7 +145,13 @@ function formatSourceValue(value) {
 }
 
 function syncUrl() {
-  const params = new URLSearchParams(contextSearch(state.context).slice(1));
+  const params = new URLSearchParams();
+  params.set('asOf', state.context.asOf);
+  if (state.view !== 'market-funds' && state.sourceType !== 'market-funds') {
+    params.set('portfolio', state.context.portfolio);
+    params.set('currency', state.context.currency);
+    params.set('compare', state.context.compare);
+  }
   params.set('view', state.view);
   if (state.activeMetric) params.set('metric', state.activeMetric);
   if (state.exceptionFilters.severity !== 'all') params.set('severity', state.exceptionFilters.severity);
@@ -193,25 +185,28 @@ const marketFundFields = [
   { key: 'forcedSaleRatio', label: '미수금 대비 반대매매비중', english: 'Forced-sale ratio', kind: 'percent' },
 ];
 
-function marketFundValue(field, row) {
+function marketFundValue(field, row, snapshot) {
   if (field.kind === 'percent') return `${row[field.key].toFixed(1)}%`;
-  return formatContextAmount(row[field.key] * 1e6, state.context.currency);
+  return formatContextAmount(row[field.key] * snapshot.monetaryScale, state.context.currency);
 }
 
 function renderMarketFunds(snapshot) {
-  const latest = snapshot.latest;
+  const selected = findMarketFundsObservation(snapshot, state.context.asOf);
+  if (!selected) {
+    return `<section class="panel empty-state data-unavailable">${icon('info')}<strong>No official observation for ${escapeHtml(state.context.asOf)}</strong><span>Latest available observation: ${escapeHtml(snapshot.asOf)}.</span><small>Choose an available source date or refresh the official source.</small></section>`;
+  }
   return `
     <section class="mini-kpi-grid">${marketFundFields.map((field) => `
       <article class="mini-kpi">
         <span>${escapeHtml(field.label)}</span>
-        <strong>${marketFundValue(field, latest)}</strong>
+        <strong>${marketFundValue(field, selected, snapshot)}</strong>
         <small>${escapeHtml(field.english)} · ${field.kind === 'percent' ? '%' : snapshot.unit}</small>
       </article>
     `).join('')}</section>
     <section class="panel table-panel">
       <div class="panel-header">
-        <div><span class="eyebrow">FREESIS · MARKET FUNDS</span><h2>Daily market funds</h2></div>
-        <span class="compare-label">${escapeHtml(snapshot.asOf)} · ${escapeHtml(snapshot.snapshotTime)} KST</span>
+        <div><span class="eyebrow">${escapeHtml(snapshot.source.name)} · MARKET FUNDS</span><h2>Daily market funds</h2></div>
+        <span class="compare-label">${escapeHtml(selected.date)} · ${escapeHtml(snapshot.snapshotTime)} KST</span>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -219,12 +214,12 @@ function renderMarketFunds(snapshot) {
           <tbody>${snapshot.series.slice(0, 20).map((row) => `
             <tr>
               <td>${escapeHtml(row.date)}</td>
-              ${marketFundFields.map((field) => `<td class="align-right numeric">${marketFundValue(field, row)}</td>`).join('')}
+              ${marketFundFields.map((field) => `<td class="align-right numeric">${marketFundValue(field, row, snapshot)}</td>`).join('')}
             </tr>
           `).join('')}</tbody>
         </table>
       </div>
-      <div class="audit-note">${icon('info')} Source: ${escapeHtml(snapshot.source.name)} · priority ${snapshot.source.priority} · ${escapeHtml(snapshot.source.collectionMethod)} · <a href="https://freesis.kofia.or.kr/stat/FreeSIS.do?parentDivId=${encodeURIComponent(snapshot.source.parentDivId)}&serviceId=${encodeURIComponent(snapshot.source.serviceId)}" target="_blank" rel="noreferrer">Open source registry</a></div>
+      <div class="audit-note">${icon('info')} Source: ${escapeHtml(snapshot.source.name)} · priority ${snapshot.source.priority} · ${escapeHtml(snapshot.source.collectionMethod)} · Retrieved ${escapeHtml(snapshot.source.retrievedAt)} · ${snapshot.source.isFallback ? `Official fallback because: ${escapeHtml(snapshot.source.fallbackReason || 'primary source unavailable')} · ` : ''}<a href="${escapeHtml(snapshot.source.referenceUrl)}" target="_blank" rel="noreferrer">Open official source reference</a></div>
     </section>
   `;
 }
@@ -300,7 +295,7 @@ function renderSidebar(activeId) {
       <div class="sidebar-spacer"></div>
       <div class="sidebar-footer">
         <div class="environment-line"><span class="environment-dot"></span> ${dataStatusLabel()} source</div>
-        <div class="sidebar-version">${state.sourceType === 'market-funds' ? 'FreeSIS · service STATSCU0100000060' : 'v0.1 · 11 Aug 2026'}</div>
+        <div class="sidebar-version">${state.source ? `${escapeHtml(state.source.name)} · priority ${state.source.priority}` : 'Awaiting official source'}</div>
       </div>
     </aside>
   `;
@@ -312,16 +307,17 @@ function renderPageHeader(activeNav) {
     portfolio: '포트폴리오 변화의 위치와 종목별 기여도를 탐색합니다.',
     operations: '결제·대사 예외를 원인, 담당자, 기한과 함께 처리합니다.',
     lending: '대여 가능 잔고, 수익 기회, 담보와 상대방 리스크를 확인합니다.',
-    scenario: '가정값을 바꿔 손익·수익·담보 영향을 비교합니다.',
     admin: 'Metric 정의, 데이터 상태, 설정 변경 감사 이력을 관리합니다.',
   };
-  const marketFundsView = state.sourceType === 'market-funds';
+  const marketFundsView = state.sourceType === 'market-funds' || activeNav.id === 'market-funds';
+  const sourceName = state.source?.name || 'official source';
+  const fallbackCopy = state.source?.isFallback ? ' Official fallback is active.' : '';
   return `
     <div class="page-header">
       <div>
         <div class="breadcrumb"><span>Workbench</span><span>/</span><strong>${marketFundsView ? 'Market data' : activeNav.label}</strong></div>
-        <h1>${marketFundsView ? 'FreeSIS Market Data' : activeNav.caption}</h1>
-        <p>${marketFundsView ? 'FreeSIS 공식 원자료에서 수집한 국내 자본시장 자금 지표입니다.' : descriptions[activeNav.id]}</p>
+        <h1>${marketFundsView ? 'Official Market Funds Data' : activeNav.caption}</h1>
+        <p>${marketFundsView ? `${escapeHtml(sourceName)} 공식 자료에서 수집한 국내 자본시장 자금 지표입니다.${fallbackCopy}` : descriptions[activeNav.id]}</p>
       </div>
       <div class="page-actions">
         <button class="button button-secondary" data-action="save-view">Save view</button>
@@ -332,13 +328,14 @@ function renderPageHeader(activeNav) {
 }
 
 function renderContextBar() {
+  const publicMarketFunds = state.view === 'market-funds' || state.sourceType === 'market-funds';
   return `
     <section class="context-bar" aria-label="Analysis context">
       <div class="context-field">
         <label for="as-of">AS-OF DATE</label>
         <input id="as-of" type="date" value="${escapeHtml(state.context.asOf)}" />
       </div>
-      <div class="context-divider"></div>
+      ${publicMarketFunds ? '' : `<div class="context-divider"></div>
       <div class="context-field">
         <label for="portfolio">PORTFOLIO</label>
         <select id="portfolio">
@@ -346,20 +343,17 @@ function renderContextBar() {
           <option ${state.context.portfolio === 'Portfolio B' ? 'selected' : ''}>Portfolio B</option>
           <option ${state.context.portfolio === 'All portfolios' ? 'selected' : ''}>All portfolios</option>
         </select>
-      </div>
+      </div>`}
       <div class="context-field context-currency">
         <label for="currency">CURRENCY</label>
-        <select id="currency">
-          <option ${state.context.currency === 'KRW' ? 'selected' : ''}>KRW</option>
-          <option ${state.context.currency === 'USD' ? 'selected' : ''}>USD</option>
-        </select>
+        <strong class="context-static-value">KRW · source native</strong>
       </div>
-      <div class="context-field context-compare">
+      ${publicMarketFunds ? '' : `<div class="context-field context-compare">
         <label for="compare">COMPARE</label>
         <select id="compare">
           ${Object.entries(compareLabels).map(([value, label]) => `<option value="${value}" ${state.context.compare === value ? 'selected' : ''}>${label}</option>`).join('')}
         </select>
-      </div>
+      </div>`}
       <div class="context-spacer"></div>
       <button class="saved-view-button" data-action="saved-view">${icon('layers')} <span>Saved view</span>${icon('chevron')}</button>
       <button class="reset-button" data-action="reset">${icon('refresh')} Reset</button>
@@ -368,13 +362,17 @@ function renderContextBar() {
 }
 
 function renderDataStatus() {
-  const statusMessage = state.dataStatus === 'demo'
-    ? `Demo data only · Use a live snapshot source for production values.`
-    : state.dataStatus === 'live'
-      ? `${state.sourceType === 'market-funds' ? 'FreeSIS market data' : 'Live data'} through ${formatContextDate(state.context.asOf)} ${state.snapshotTime} KST.`
-      : state.dataStatus === 'loading'
-        ? 'Connecting to the live snapshot source…'
-        : `Live data unavailable · ${state.dataError}`;
+  const selectedMarketFunds = state.sourceType === 'market-funds' && state.marketFunds
+    ? findMarketFundsObservation(state.marketFunds, state.context.asOf)
+    : null;
+  const observationMessage = state.sourceType === 'market-funds' && !selectedMarketFunds
+    ? ` No official observation is available for ${state.context.asOf}.`
+    : '';
+  const statusMessage = state.dataStatus === 'live' || state.dataStatus === 'fallback'
+    ? `${state.source?.name || 'Official source'} through ${formatContextDate(state.context.asOf)} ${state.snapshotTime} KST.${state.source?.isFallback ? ' Primary FreeSIS was unavailable.' : ''}${observationMessage} Retrieved ${state.source?.retrievedAt || 'unknown'}.`
+    : state.dataStatus === 'loading'
+      ? 'Connecting to the official source…'
+      : `Official data unavailable · ${state.dataError}`;
   return `
     <div class="data-banner">
       <span class="banner-icon">${icon('info')}</span>
@@ -392,7 +390,6 @@ function renderView(filteredExceptions) {
   if (state.view === 'portfolio') return renderPortfolio();
   if (state.view === 'operations') return renderOperations(filteredExceptions);
   if (state.view === 'lending') return renderLending();
-  if (state.view === 'scenario') return renderScenario();
   if (state.view === 'admin') return renderAdmin();
   return renderCockpit(filteredExceptions);
 }
@@ -557,8 +554,8 @@ function renderOperationsDetail(row) {
       <div class="detail-heading"><div><span class="eyebrow">${escapeHtml(row.id)} · EXCEPTION DETAIL</span><h2>${escapeHtml(row.type)}</h2><p>${escapeHtml(row.security)} · ${escapeHtml(row.isin)}</p></div>${severityBadge(row.severity)}</div>
       <div class="detail-alert"><span>${icon('alert')}</span><div><strong>${formatContextAmount(row.amount, state.context.currency)} impact</strong><p>${escapeHtml(row.reason)}</p></div></div>
       <div class="detail-section"><span class="eyebrow">SYSTEM COMPARISON</span><div class="comparison-grid">${Object.entries(row.systems).map(([system, value]) => `<div><span>${escapeHtml(system)}</span><strong>${formatSourceValue(value)}</strong></div>`).join('')}</div></div>
-      <div class="detail-form"><label for="reason">Root cause / handling note</label><textarea id="reason" rows="3" placeholder="Add an auditable handling note...">${escapeHtml(row.reason)}</textarea><div class="form-row"><label for="owner">Owner<select id="owner"><option>${escapeHtml(row.owner)}</option><option>J. Kim</option><option>M. Lee</option><option>S. Park</option></select></label><label for="status">Status<select id="status"><option>${escapeHtml(row.status)}</option><option>New</option><option>Investigating</option><option>Waiting</option><option>Resolved</option></select></label></div><div class="form-actions"><button class="button button-secondary" data-action="open-explain-exception" data-exception-id="${escapeHtml(row.id)}">Explain source</button><button class="button button-primary" data-action="save-exception" data-exception-id="${escapeHtml(row.id)}">Save update</button></div></div>
-      <div class="audit-note">${icon('info')} Save is repository-confirmed and creates an Audit ID. Waived requires reason and Manager approval.</div>
+      <div class="detail-form"><label for="reason">Root cause / handling note</label><textarea id="reason" rows="3" readonly>${escapeHtml(row.reason)}</textarea><div class="form-row"><label for="owner">Owner<select id="owner" disabled><option>${escapeHtml(row.owner)}</option></select></label><label for="status">Status<select id="status" disabled><option>${escapeHtml(row.status)}</option></select></label></div><div class="form-actions"><button class="button button-secondary" data-action="open-explain-exception" data-exception-id="${escapeHtml(row.id)}">Explain source</button></div></div>
+      <div class="audit-note">${icon('info')} This authorized internal snapshot is read-only. Updates require the source system's write API.</div>
     </article>
   `;
 }
@@ -586,53 +583,13 @@ function renderLending() {
   `;
 }
 
-function renderScenario() {
-  const scenario = state.scenario;
-  const validation = validateScenario(scenario);
-  const fields = [
-    ['rate', 'Rate shock', 'bp', -100, 100],
-    ['spread', 'Spread shock', 'bp', -100, 200],
-    ['fx', 'FX shock', '%', -10, 10],
-    ['fee', 'Lending fee', 'bp', -50, 100],
-    ['lendingRatio', 'Lending ratio', '%', 0, 100],
-    ['haircut', 'Haircut', '%', 0, 20],
-  ];
-  const currentPnl = metrics.find((metric) => metric.id === 'pnl').value;
-  const lendingBalance = metrics.find((metric) => metric.id === 'lending').value;
-  const currentRevenue = lendingRows.reduce((sum, row) => sum + ((row.available * row.fee) / 100 / 365), 0);
-  const scenarioHolding = lendingRows.reduce((sum, row) => sum + row.holding, 0);
-  const currentCoverage = scenarioHolding
-    ? lendingRows.reduce((sum, row) => sum + (row.holding * row.collateral), 0) / scenarioHolding
-    : 0;
-  const { pnl: pnlImpact, revenuePerDay: revenueImpact, collateralCoverage: collateralImpact } = calculateScenarioImpact(scenario, { lendingBalance });
-  const assumptions = fields.map(([key, label, suffix, min, max]) => `
-    <label class="assumption-row" for="scenario-${key}">
-      <span>${label}<small>Allowed ${min} to ${max} ${suffix}</small></span>
-      <span>
-        <span class="input-suffix">
-          <input id="scenario-${key}" data-scenario="${key}" type="number" min="${min}" max="${max}" value="${escapeHtml(scenario[key])}" aria-invalid="${validation.errors[key] ? 'true' : 'false'}" />
-          <b>${suffix}</b>
-        </span>
-        <small class="input-error" data-error-for="${key}">${escapeHtml(validation.errors[key] || '')}</small>
-      </span>
-    </label>
-  `).join('');
-  return `
-    <div class="simulation-banner"><span class="simulation-tag">SIMULATION</span><strong>Scenario Draft 03</strong><span>Base: ${escapeHtml(state.context.asOf)} · ${escapeHtml(state.context.portfolio)}</span><button data-action="reset-scenario">Reset assumptions</button></div>
-    <section class="scenario-layout">
-      <article class="panel assumptions-panel"><div class="panel-header"><div><span class="eyebrow">ASSUMPTIONS</span><h2>Market & lending shocks</h2></div><span class="status-badge status-scenario"><span class="status-dot"></span>Draft</span></div><div class="assumptions">${assumptions}</div><div class="form-actions"><button class="button button-secondary" data-action="reset-scenario">Reset</button><button class="button button-primary" data-action="run-scenario" ${validation.valid ? '' : 'disabled'}>Run scenario</button></div><div class="audit-note">${icon('info')} Scenario is indicative and never writes to official ledger or operations state.</div></article>
-      <article class="panel scenario-results"><div class="panel-header"><div><span class="eyebrow">RESULTS · INDICATIVE</span><h2>Current vs Scenario</h2></div>${scenario.hasRun ? statusBadge('Applied', 'scenario') : statusBadge('Not run', 'neutral')}</div><div class="result-table"><div class="result-head"><span>Metric</span><span>Current</span><span>Scenario</span><span>Delta</span></div>${[['P&L', formatContextAmount(currentPnl, state.context.currency), formatContextAmount(currentPnl + pnlImpact, state.context.currency), formatContextAmount(pnlImpact, state.context.currency)], ['Lending revenue / day', formatContextAmount(currentRevenue, state.context.currency), formatContextAmount(currentRevenue + revenueImpact, state.context.currency), formatContextAmount(revenueImpact, state.context.currency)], ['Collateral coverage', `${currentCoverage.toFixed(1)}%`, `${(currentCoverage + collateralImpact).toFixed(1)}%`, `${collateralImpact.toFixed(1)} pp`]].map(([label, current, result, delta]) => `<div class="result-row"><strong>${label}</strong><span>${current}</span><span>${result}</span><b class="${delta.startsWith('-') ? 'negative-value' : 'positive-value'}">${delta}</b></div>`).join('')}</div><div class="scenario-callout">${icon('info')} Model: duration approximation · FX translation · simple fee/day-count. Full reprice is not included.</div></article>
-    </section>
-  `;
-}
-
 function renderAdmin() {
   return `
     <section class="admin-grid">
       <article class="panel table-panel"><div class="panel-header"><div><span class="eyebrow">METRIC DICTIONARY</span><h2>Registered metrics <span class="count-badge">${metricDictionary.length}</span></h2></div><button class="button button-primary">Add metric</button></div><div class="table-wrap"><table class="data-table"><thead><tr><th>Metric</th><th>Definition</th><th>Unit</th><th>Source</th><th>Version</th><th>Owner</th></tr></thead><tbody>${metricDictionary.map((row) => `<tr><td><strong>${row.metric}</strong><small>${row.id}</small></td><td class="definition-cell">${row.definition}</td><td>${row.unit}</td><td>${row.source}</td><td><span class="version-label">${row.version}</span></td><td>${row.owner}</td></tr>`).join('')}</tbody></table></div></article>
       <article class="panel audit-panel"><div class="panel-header"><div><span class="eyebrow">AUDIT TRAIL</span><h2>Recent activity</h2></div><button class="text-button">View all ${icon('external')}</button></div><div class="audit-list">${auditEvents.map((event) => `<div class="audit-row"><time>${event.time}</time><div><strong>${event.action}</strong><span>${event.actor} · ${event.target}</span></div><code>${event.result}</code></div>`).join('')}</div><div class="audit-note">${icon('info')} Audit events are append-only and retain before/after values for controlled updates.</div></article>
     </section>
-    <section class="mini-kpi-grid admin-status">${[['Data quality', dataStatusLabel(), demoMode ? 'Synthetic values for local testing' : 'Live snapshot source'], ['Metric coverage', '100%', 'All loaded metrics have lineage'], ['Last snapshot', `${state.snapshotTime} KST`, `${demoMode ? 'Demo' : 'Live'} · ${state.context.asOf}`], ['Access policy', 'RBAC active', 'Portfolio + role scope']].map(([label, value, sub]) => `<article class="mini-kpi"><span>${label}</span><strong>${value}</strong><small>${sub}</small></article>`).join('')}</section>
+    <section class="mini-kpi-grid admin-status">${[['Data quality', dataStatusLabel(), state.source?.name || 'Official source'], ['Metric coverage', '100%', 'All loaded metrics have lineage'], ['Last snapshot', `${state.snapshotTime} KST`, `${state.source?.name || 'Official source'} · ${state.context.asOf}`], ['Access policy', 'RBAC active', 'Portfolio + role scope']].map(([label, value, sub]) => `<article class="mini-kpi"><span>${label}</span><strong>${value}</strong><small>${sub}</small></article>`).join('')}</section>
   `;
 }
 
@@ -693,8 +650,13 @@ async function readSnapshotResponse(response) {
 function applyLiveSnapshot(snapshot) {
   if (snapshot.sourceType === 'market-funds') {
     state.sourceType = 'market-funds';
+    state.source = snapshot.source;
     state.marketFunds = snapshot;
-    state.context.asOf = snapshot.asOf;
+    navigation = publicNavigation;
+    state.view = 'market-funds';
+    if (!findMarketFundsObservation(snapshot, state.context.asOf)) {
+      state.context.asOf = snapshot.asOf;
+    }
     state.snapshotTime = normalizeSnapshotTime(snapshot.snapshotTime);
     return;
   }
@@ -711,7 +673,16 @@ function applyLiveSnapshot(snapshot) {
   exceptions = snapshot.exceptions;
   auditEvents = snapshot.auditEvents;
   state.sourceType = 'internal-snapshot';
+  state.source = snapshot.source || {
+    sourceId: 'internal-snapshot',
+    name: 'Authorized internal snapshot',
+    priority: 0,
+    isFallback: false,
+    referenceUrl: null,
+  };
   state.marketFunds = null;
+  navigation = privateNavigation;
+  state.view = privateNavigation.some((item) => item.id === requestedView) ? requestedView : 'overview';
   state.context.asOf = snapshot.asOf;
   state.snapshotTime = normalizeSnapshotTime(snapshot.snapshotTime);
 }
@@ -729,7 +700,7 @@ async function loadLiveSnapshot({ notify = false } = {}) {
     });
     const snapshot = await readSnapshotResponse(response);
     applyLiveSnapshot(snapshot);
-    state.dataStatus = 'live';
+    state.dataStatus = snapshot.sourceType === 'market-funds' && snapshot.source.isFallback ? 'fallback' : 'live';
     state.dataReady = true;
     render();
     if (notify) showToast(`Live snapshot refreshed · ${state.snapshotTime} KST`);
@@ -816,7 +787,7 @@ function bindEvents() {
       render();
       return;
     }
-    if (['as-of', 'portfolio', 'currency', 'compare'].includes(element.id)) {
+    if (['as-of', 'portfolio', 'compare'].includes(element.id)) {
       if (element.id === 'as-of' && !isValidCalendarDate(element.value)) {
         element.value = state.context.asOf;
         showToast('As-of date must be a valid calendar date');
@@ -841,16 +812,6 @@ function bindEvents() {
       }, 120);
       return;
     }
-    if (!element.matches('[data-scenario]')) return;
-    state.scenario[element.dataset.scenario] = Number(element.value);
-    state.scenario.hasRun = false;
-    const validation = validateScenario(state.scenario);
-    state.scenario.errors = validation.errors;
-    element.setAttribute('aria-invalid', validation.errors[element.dataset.scenario] ? 'true' : 'false');
-    const error = element.closest('.assumption-row')?.querySelector('.input-error');
-    if (error) error.textContent = validation.errors[element.dataset.scenario] || '';
-    const runButton = root.querySelector('[data-action="run-scenario"]');
-    if (runButton) runButton.disabled = !validation.valid;
   });
 }
 
@@ -876,37 +837,17 @@ const actionHandlers = {
     render();
   },
   refresh: () => {
-    if (!demoMode) {
-      void loadLiveSnapshot({ notify: true });
-      return;
-    }
-    ({
-      cashflows,
-      checklist,
-      drivers,
-      lendingRows,
-      metricDictionary,
-      metrics,
-      positions,
-    } = repository.refreshSnapshot());
-    state.snapshotTime = new Intl.DateTimeFormat('en-GB', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-      timeZone: 'Asia/Seoul',
-    }).format(new Date());
-    render();
-    showToast(`Demo snapshot refreshed · ${state.snapshotTime} KST`);
+    void loadLiveSnapshot({ notify: true });
   },
   'show-status': () => {
-    if (state.dataStatus === 'demo') {
-      showToast('Demo data only · no live source is connected');
-    } else if (state.dataStatus === 'error') {
+    if (state.dataStatus === 'error') {
       showToast(state.dataError);
     } else if (state.dataStatus === 'loading') {
-      showToast('Connecting to the live snapshot source');
+      showToast('Connecting to the official source');
+    } else if (state.dataStatus === 'fallback') {
+      showToast(`Official fallback active · ${state.source.name} · ${state.source.fallbackReason || 'FreeSIS unavailable'}`);
     } else {
-      showToast(`Live snapshot loaded · ${state.snapshotTime} KST`);
+      showToast(`${state.source?.name || 'Official source'} loaded · ${state.snapshotTime} KST`);
     }
   },
   'saved-view': () => {
@@ -918,44 +859,8 @@ const actionHandlers = {
   export: () => {
     showToast('Export queued with current context and metric definition v1.0');
   },
-  'reset-scenario': () => {
-    state.scenario = { rate: -25, spread: 10, fx: 1, fee: 5, lendingRatio: 70, haircut: 2, hasRun: false, errors: {} };
-    render();
-  },
-  'run-scenario': () => {
-    const validation = validateScenario(state.scenario);
-    if (!validation.valid) {
-      state.scenario.errors = validation.errors;
-      render();
-      showToast('Scenario contains invalid assumptions');
-      return;
-    }
-    state.scenario.hasRun = true;
-    render();
-    showToast('Scenario applied · no official data was changed');
-  },
   'save-exception': (element) => {
-    if (!repository) {
-      showToast('Live snapshot updates require a configured write API');
-      return;
-    }
-    const id = element.dataset.exceptionId || state.selectedException;
-    const reason = root.querySelector('#reason')?.value.trim();
-    const owner = root.querySelector('#owner')?.value;
-    const status = root.querySelector('#status')?.value;
-    if (!id || !reason) {
-      showToast('A handling note is required before saving');
-      return;
-    }
-    try {
-      const result = repository.updateException(id, { reason, owner, status });
-      state.selectedException = id;
-      render();
-      if (!demoMode) void loadLiveSnapshot();
-      showToast(`Update saved · Audit ID ${result.auditId}`);
-    } catch (error) {
-      showToast(`Unable to save update: ${error.message}`);
-    }
+    showToast('The configured internal snapshot is read-only');
   },
   'open-explain-exception': (element) => {
     const exception = exceptions.find((row) => row.id === element.dataset.exceptionId);
@@ -984,4 +889,4 @@ function handleAction(action, element) {
 }
 
 render();
-if (!demoMode) void loadLiveSnapshot();
+void loadLiveSnapshot();
