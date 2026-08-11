@@ -1,4 +1,21 @@
+import { createDemoRepository } from './repository.js';
+import { calculateScenarioImpact, validateScenario } from './scenario.js';
 import {
+  compareLabels,
+  contextSearch,
+  filterExceptions,
+  formatContextAmount,
+  formatSignedNumber,
+  formatSignedPercent,
+  isValidCalendarDate,
+  readExceptionFilters,
+  readMetricFilter,
+  readContext,
+} from './state.js';
+
+const root = document.querySelector('#app');
+const repository = createDemoRepository();
+const {
   cashflows,
   checklist,
   drivers,
@@ -7,23 +24,7 @@ import {
   metrics,
   navigation,
   positions,
-} from './data.js';
-import { createDemoRepository } from './repository.js';
-import { validateScenario } from './scenario.js';
-import {
-  compareLabels,
-  contextSearch,
-  filterExceptions,
-  formatContextAmount,
-  formatSignedNumber,
-  formatSignedPercent,
-  readExceptionFilters,
-  readMetricFilter,
-  readContext,
-} from './state.js';
-
-const root = document.querySelector('#app');
-const repository = createDemoRepository();
+} = repository.getSnapshot();
 const exceptions = repository.getExceptions();
 const auditEvents = repository.getAuditEvents();
 const initialContext = readContext(window.location.search);
@@ -96,6 +97,16 @@ function statusBadge(label, tone = 'neutral') {
   return `<span class="status-badge status-${tone}"><span class="status-dot"></span>${escapeHtml(label)}</span>`;
 }
 
+function statusTone(status) {
+  return {
+    New: 'new',
+    Investigating: 'investigating',
+    Waiting: 'waiting',
+    Resolved: 'resolved',
+    Waived: 'waived',
+  }[status] || 'neutral';
+}
+
 function severityBadge(severity) {
   return `<span class="severity severity-${severity.toLowerCase()}"><span class="severity-mark">${severity === 'Critical' ? '!' : severity === 'High' ? '↑' : severity === 'Warning' ? '•' : 'i'}</span>${severity}</span>`;
 }
@@ -118,6 +129,13 @@ function metricCompareValue(metric) {
   return metric.comparisons?.[state.context.compare] ?? metric.compare;
 }
 
+function formatSourceValue(value) {
+  const match = /^(-?\d+(?:\.\d+)?)(bn|m|k)$/.exec(String(value));
+  if (!match) return escapeHtml(value);
+  const multipliers = { bn: 1e9, m: 1e6, k: 1e3 };
+  return formatContextAmount(Number(match[1]) * multipliers[match[2]], state.context.currency);
+}
+
 function syncUrl() {
   const params = new URLSearchParams(contextSearch(state.context).slice(1));
   params.set('view', state.view);
@@ -129,14 +147,18 @@ function syncUrl() {
   window.history.replaceState(null, '', nextUrl);
 }
 
+const metricExceptionMatchers = {
+  'book-value': (row) => row.type.toLowerCase().includes('book value'),
+  pnl: (row) => ['book value mismatch', 'accrued interest'].includes(row.type.toLowerCase()),
+  settlement: (row) => ['settlement', 'trade amount'].some((term) => row.type.toLowerCase().includes(term)),
+  'settlement-fail': (row) => row.type.toLowerCase().includes('settlement'),
+  lending: (row) => row.type.toLowerCase().includes('collateral'),
+  critical: (row) => row.severity === 'Critical',
+};
+
 function filterCockpitExceptions(rows) {
-  if (state.activeMetric === 'critical') {
-    return rows.filter((row) => row.severity === 'Critical');
-  }
-  if (state.activeMetric === 'settlement-fail') {
-    return rows.filter((row) => row.type.toLowerCase().includes('settlement'));
-  }
-  return rows;
+  const matcher = metricExceptionMatchers[state.activeMetric];
+  return matcher ? rows.filter(matcher) : rows;
 }
 
 function renderDriverRow(driver) {
@@ -171,7 +193,10 @@ function render() {
       <div class="toast-region" aria-live="polite"></div>
     </div>
   `;
-  bindEvents();
+  if (!root.dataset.eventsBound) {
+    bindEvents();
+    root.dataset.eventsBound = 'true';
+  }
 }
 
 function renderMasthead() {
@@ -349,10 +374,11 @@ function renderCockpit(filteredExceptions) {
             <option value="Critical" ${state.exceptionFilters.severity === 'Critical' ? 'selected' : ''}>Critical</option>
             <option value="High" ${state.exceptionFilters.severity === 'High' ? 'selected' : ''}>High</option>
             <option value="Warning" ${state.exceptionFilters.severity === 'Warning' ? 'selected' : ''}>Warning</option>
+            <option value="Info" ${state.exceptionFilters.severity === 'Info' ? 'selected' : ''}>Info</option>
           </select>
           <select data-filter="status" aria-label="Filter by status">
             <option value="all" ${state.exceptionFilters.status === 'all' ? 'selected' : ''}>All status</option>
-            ${['New', 'Investigating', 'Waiting', 'Resolved'].map((value) => `<option ${state.exceptionFilters.status === value ? 'selected' : ''}>${value}</option>`).join('')}
+            ${['New', 'Investigating', 'Waiting', 'Resolved', 'Waived'].map((value) => `<option ${state.exceptionFilters.status === value ? 'selected' : ''}>${value}</option>`).join('')}
           </select>
           <span class="queue-sort">${icon('alert')} Sorted by severity · due · impact</span>
         </div>
@@ -392,7 +418,7 @@ function renderExceptionTable(rows) {
             <td><span class="security-cell">${row.security}</span><small>${row.counterparty}</small></td>
             <td class="align-right numeric">${formatContextAmount(row.amount, state.context.currency)}</td>
             <td>${row.owner}</td>
-            <td>${statusBadge(row.status, row.status === 'New' ? 'new' : row.status === 'Investigating' ? 'investigating' : 'waiting')}</td>
+            <td>${statusBadge(row.status, statusTone(row.status))}</td>
           </tr>
         `).join('')}</tbody>
       </table>
@@ -448,7 +474,7 @@ function renderOperations(filteredExceptions) {
     <section class="operations-layout">
       <article class="panel operations-queue">
         <div class="panel-header"><div><span class="eyebrow">RECONCILIATION ENGINE</span><h2>Exception queue <span class="count-badge">${filteredExceptions.length}</span></h2></div><button class="button button-secondary" data-action="refresh">${icon('refresh')} Re-run checks</button></div>
-        <div class="queue-toolbar"><select data-filter="severity"><option value="all">All severity</option>${['Critical', 'High', 'Warning', 'Info'].map((value) => `<option ${state.exceptionFilters.severity === value ? 'selected' : ''}>${value}</option>`).join('')}</select><select data-filter="status"><option value="all">All status</option>${['New', 'Investigating', 'Waiting', 'Resolved'].map((value) => `<option ${state.exceptionFilters.status === value ? 'selected' : ''}>${value}</option>`).join('')}</select><span class="queue-sort">${icon('info')} ${state.exceptionFilters.search ? `Search: ${escapeHtml(state.exceptionFilters.search)}` : 'All operational exceptions'}</span></div>
+        <div class="queue-toolbar"><select data-filter="severity"><option value="all">All severity</option>${['Critical', 'High', 'Warning', 'Info'].map((value) => `<option ${state.exceptionFilters.severity === value ? 'selected' : ''}>${value}</option>`).join('')}</select><select data-filter="status"><option value="all">All status</option>${['New', 'Investigating', 'Waiting', 'Resolved', 'Waived'].map((value) => `<option ${state.exceptionFilters.status === value ? 'selected' : ''}>${value}</option>`).join('')}</select><span class="queue-sort">${icon('info')} ${state.exceptionFilters.search ? `Search: ${escapeHtml(state.exceptionFilters.search)}` : 'All operational exceptions'}</span></div>
         ${renderExceptionTable(filteredExceptions)}
       </article>
       ${selected ? renderOperationsDetail(selected) : '<article class="panel empty-state">Select an exception to inspect its system values.</article>'}
@@ -461,9 +487,9 @@ function renderOperationsDetail(row) {
     <article class="panel exception-detail">
       <div class="detail-heading"><div><span class="eyebrow">${escapeHtml(row.id)} · EXCEPTION DETAIL</span><h2>${escapeHtml(row.type)}</h2><p>${escapeHtml(row.security)} · ${escapeHtml(row.isin)}</p></div>${severityBadge(row.severity)}</div>
       <div class="detail-alert"><span>${icon('alert')}</span><div><strong>${formatContextAmount(row.amount, state.context.currency)} impact</strong><p>${escapeHtml(row.reason)}</p></div></div>
-      <div class="detail-section"><span class="eyebrow">SYSTEM COMPARISON</span><div class="comparison-grid">${Object.entries(row.systems).map(([system, value]) => `<div><span>${escapeHtml(system)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div></div>
+      <div class="detail-section"><span class="eyebrow">SYSTEM COMPARISON</span><div class="comparison-grid">${Object.entries(row.systems).map(([system, value]) => `<div><span>${escapeHtml(system)}</span><strong>${formatSourceValue(value)}</strong></div>`).join('')}</div></div>
       <div class="detail-form"><label for="reason">Root cause / handling note</label><textarea id="reason" rows="3" placeholder="Add an auditable handling note...">${escapeHtml(row.reason)}</textarea><div class="form-row"><label for="owner">Owner<select id="owner"><option>${escapeHtml(row.owner)}</option><option>J. Kim</option><option>M. Lee</option><option>S. Park</option></select></label><label for="status">Status<select id="status"><option>${escapeHtml(row.status)}</option><option>New</option><option>Investigating</option><option>Waiting</option><option>Resolved</option></select></label></div><div class="form-actions"><button class="button button-secondary" data-action="open-explain-exception">Explain source</button><button class="button button-primary" data-action="save-exception" data-exception-id="${escapeHtml(row.id)}">Save update</button></div></div>
-      <div class="audit-note">${icon('info')} Save is server-confirmed and creates an Audit ID. Waived requires reason and Manager approval.</div>
+      <div class="audit-note">${icon('info')} Save is repository-confirmed and creates an Audit ID. Waived requires reason and Manager approval.</div>
     </article>
   `;
 }
@@ -500,9 +526,7 @@ function renderScenario() {
     ['haircut', 'Haircut', '%', 0, 20],
   ];
   const currentPnl = -12480000000;
-  const pnlImpact = (scenario.rate * 420000000) + (scenario.spread * -210000000) + ((scenario.fx - 1) * 8500000000);
-  const revenueImpact = ((scenario.fee / 100) * 394800000000 * (scenario.lendingRatio / 100)) / 365;
-  const collateralImpact = scenario.haircut * -1.8;
+  const { pnl: pnlImpact, revenuePerDay: revenueImpact, collateralCoverage: collateralImpact } = calculateScenarioImpact(scenario);
   const assumptions = fields.map(([key, label, suffix, min, max]) => `
     <label class="assumption-row" for="scenario-${key}">
       <span>${label}<small>Allowed ${min} to ${max} ${suffix}</small></span>
@@ -562,7 +586,7 @@ function renderExceptionDrawer(exceptionId) {
     <div class="drawer-backdrop" data-action="close-drawer"></div>
     <aside class="drawer drawer-exception" role="dialog" aria-modal="true" aria-label="Exception detail">
       <div class="drawer-header"><div><span class="eyebrow">${escapeHtml(row.id)} · EXCEPTION DETAIL</span><h2>${escapeHtml(row.type)}</h2><p>${escapeHtml(row.security)} · ${escapeHtml(row.counterparty)}</p></div><button class="icon-button" data-action="close-drawer" aria-label="Close detail">${icon('close')}</button></div>
-      <div class="drawer-body"><div class="detail-alert"><span>${icon('alert')}</span><div><strong>${escapeHtml(row.severity)} · ${formatContextAmount(row.amount, state.context.currency)} impact</strong><p>${escapeHtml(row.reason)}</p></div></div><section class="drawer-section"><span class="drawer-label">SYSTEM COMPARISON</span><div class="system-values">${Object.entries(row.systems).map(([system, value]) => `<div><span>${escapeHtml(system)}</span><strong>${escapeHtml(value)}</strong></div>`).join('')}</div></section><section class="drawer-section"><span class="drawer-label">WORKFLOW</span><div class="workflow-meta"><div><span>Owner</span><strong>${escapeHtml(row.owner)}</strong></div><div><span>Due</span><strong class="${row.dueSort <= 2 ? 'due-soon' : ''}">${escapeHtml(row.due)}</strong></div><div><span>Status</span><strong>${statusBadge(row.status, row.status === 'New' ? 'new' : 'investigating')}</strong></div></div></section><section class="drawer-section"><span class="drawer-label">SOURCE</span><p>${escapeHtml(row.source)}<br /><small>As-of ${escapeHtml(row.asOf)} · Rule version R-01</small></p></section></div>
+      <div class="drawer-body"><div class="detail-alert"><span>${icon('alert')}</span><div><strong>${escapeHtml(row.severity)} · ${formatContextAmount(row.amount, state.context.currency)} impact</strong><p>${escapeHtml(row.reason)}</p></div></div><section class="drawer-section"><span class="drawer-label">SYSTEM COMPARISON</span><div class="system-values">${Object.entries(row.systems).map(([system, value]) => `<div><span>${escapeHtml(system)}</span><strong>${formatSourceValue(value)}</strong></div>`).join('')}</div></section><section class="drawer-section"><span class="drawer-label">WORKFLOW</span><div class="workflow-meta"><div><span>Owner</span><strong>${escapeHtml(row.owner)}</strong></div><div><span>Due</span><strong class="${row.dueSort <= 2 ? 'due-soon' : ''}">${escapeHtml(row.due)}</strong></div><div><span>Status</span><strong>${statusBadge(row.status, statusTone(row.status))}</strong></div></div></section><section class="drawer-section"><span class="drawer-label">SOURCE</span><p>${escapeHtml(row.source)}<br /><small>As-of ${escapeHtml(row.asOf)} · Rule version R-01</small></p></section></div>
       <div class="drawer-footer"><button class="button button-secondary" data-action="close-drawer">Close</button><button class="button button-primary" data-view="operations">Open workflow ${icon('external')}</button></div>
     </aside>
   `;
@@ -575,128 +599,111 @@ function showToast(message) {
   window.setTimeout(() => { region.innerHTML = ''; }, 2800);
 }
 
+let searchTimer;
+
 function bindEvents() {
-  root.querySelectorAll('[data-view]').forEach((element) => {
-    element.addEventListener('click', () => {
+  root.addEventListener('click', (event) => {
+    const element = event.target.closest('[data-action], [data-view], [data-explain], [data-metric], [data-exception], [data-security-detail], [data-security], [data-rating]');
+    if (!element || !root.contains(element)) return;
+
+    if (element.dataset.action) {
+      handleAction(element.dataset.action, element);
+    } else if (element.dataset.view) {
       state.view = element.dataset.view;
       state.selectedException = null;
       state.explainMetric = null;
       render();
-    });
-  });
-
-  root.querySelectorAll('[data-explain]').forEach((element) => {
-    element.addEventListener('click', (event) => {
-      event.stopPropagation();
+    } else if (element.dataset.explain) {
       state.explainMetric = element.dataset.explain;
       state.selectedException = null;
       render();
-    });
-  });
-
-  root.querySelectorAll('[data-metric]').forEach((element) => {
-    const selectMetric = () => {
+    } else if (element.dataset.metric) {
       state.activeMetric = state.activeMetric === element.dataset.metric ? null : element.dataset.metric;
       if (state.activeMetric === 'settlement-fail' || state.activeMetric === 'critical') {
         state.exceptionFilters.severity = 'all';
         state.exceptionFilters.status = 'all';
       }
       render();
-    };
-    element.addEventListener('click', selectMetric);
-    element.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        selectMetric();
-      }
-    });
-  });
-
-  root.querySelectorAll('[data-exception]').forEach((element) => {
-    const selectException = () => {
+    } else if (element.dataset.exception) {
       state.selectedException = element.dataset.exception;
       state.explainMetric = null;
       render();
-    };
-    element.addEventListener('click', selectException);
-    element.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault();
-        selectException();
-      }
-    });
-  });
-
-  root.querySelectorAll('[data-security]').forEach((element) => {
-    element.addEventListener('click', () => {
+    } else if (element.dataset.securityDetail) {
+      state.selectedSecurity = element.dataset.securityDetail;
+      render();
+    } else if (element.dataset.security) {
       state.selectedSecurity = element.dataset.security;
       render();
       if (state.view === 'lending') showToast(`${element.dataset.security} selected`);
-    });
-  });
-
-  root.querySelectorAll('[data-rating]').forEach((element) => {
-    element.addEventListener('click', () => {
+    } else if (element.dataset.rating) {
       state.activeMetric = state.activeMetric === `rating:${element.dataset.rating}`
         ? null
         : `rating:${element.dataset.rating}`;
       render();
-    });
+    }
   });
 
-  root.querySelectorAll('[data-security-detail]').forEach((element) => {
-    element.addEventListener('click', (event) => {
-      event.stopPropagation();
-      state.selectedSecurity = element.dataset.securityDetail;
+  root.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const element = event.target.closest('[data-metric], [data-exception], [data-security]');
+    if (!element || !root.contains(element)) return;
+    if (element.tagName === 'BUTTON' && element.dataset.security) return;
+    event.preventDefault();
+    if (element.dataset.metric) {
+      state.activeMetric = state.activeMetric === element.dataset.metric ? null : element.dataset.metric;
       render();
-    });
+    } else if (element.dataset.exception) {
+      state.selectedException = element.dataset.exception;
+      state.explainMetric = null;
+      render();
+    } else {
+      state.selectedSecurity = element.dataset.security;
+      render();
+    }
   });
 
-  root.querySelectorAll('[data-filter]').forEach((element) => {
-    element.addEventListener('change', () => {
+  root.addEventListener('change', (event) => {
+    const element = event.target;
+    if (element.matches('[data-filter]')) {
       state.exceptionFilters[element.dataset.filter] = element.value;
       render();
-    });
-  });
-
-  const search = root.querySelector('#global-search');
-  if (search) {
-    search.addEventListener('input', () => {
-      state.exceptionFilters.search = search.value;
-      const cursorPosition = search.selectionStart;
+      return;
+    }
+    if (['as-of', 'portfolio', 'currency', 'compare'].includes(element.id)) {
+      if (element.id === 'as-of' && !isValidCalendarDate(element.value)) {
+        element.value = state.context.asOf;
+        showToast('As-of date must be a valid calendar date');
+        return;
+      }
+      state.context[element.id === 'as-of' ? 'asOf' : element.id] = element.value;
       render();
-      const nextSearch = root.querySelector('#global-search');
-      nextSearch.focus();
-      nextSearch.setSelectionRange(cursorPosition, cursorPosition);
-    });
-  }
-
-  ['as-of', 'portfolio', 'currency', 'compare'].forEach((field) => {
-    const element = root.querySelector(`#${field}`);
-    if (!element) return;
-    element.addEventListener('change', () => {
-      state.context[field === 'as-of' ? 'asOf' : field] = element.value;
-      syncUrl();
-      render();
-    });
+    }
   });
 
-  root.querySelectorAll('[data-scenario]').forEach((element) => {
-    element.addEventListener('input', () => {
-      state.scenario[element.dataset.scenario] = Number(element.value);
-      state.scenario.hasRun = false;
-      const validation = validateScenario(state.scenario);
-      state.scenario.errors = validation.errors;
-      element.setAttribute('aria-invalid', validation.errors[element.dataset.scenario] ? 'true' : 'false');
-      const error = element.closest('.assumption-row')?.querySelector('.input-error');
-      if (error) error.textContent = validation.errors[element.dataset.scenario] || '';
-      const runButton = root.querySelector('[data-action="run-scenario"]');
-      if (runButton) runButton.disabled = !validation.valid;
-    });
-  });
-
-  root.querySelectorAll('[data-action]').forEach((element) => {
-    element.addEventListener('click', () => handleAction(element.dataset.action, element));
+  root.addEventListener('input', (event) => {
+    const element = event.target;
+    if (element.id === 'global-search') {
+      state.exceptionFilters.search = element.value;
+      const cursorPosition = element.selectionStart;
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => {
+        render();
+        const nextSearch = root.querySelector('#global-search');
+        nextSearch?.focus();
+        nextSearch?.setSelectionRange(cursorPosition, cursorPosition);
+      }, 120);
+      return;
+    }
+    if (!element.matches('[data-scenario]')) return;
+    state.scenario[element.dataset.scenario] = Number(element.value);
+    state.scenario.hasRun = false;
+    const validation = validateScenario(state.scenario);
+    state.scenario.errors = validation.errors;
+    element.setAttribute('aria-invalid', validation.errors[element.dataset.scenario] ? 'true' : 'false');
+    const error = element.closest('.assumption-row')?.querySelector('.input-error');
+    if (error) error.textContent = validation.errors[element.dataset.scenario] || '';
+    const runButton = root.querySelector('[data-action="run-scenario"]');
+    if (runButton) runButton.disabled = !validation.valid;
   });
 }
 

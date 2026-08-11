@@ -1,4 +1,15 @@
-import { auditEvents, exceptions } from './data.js';
+import {
+  auditEvents,
+  cashflows,
+  checklist,
+  drivers,
+  exceptions,
+  lendingRows,
+  metricDictionary,
+  metrics,
+  navigation,
+  positions,
+} from './data.js';
 
 function cloneException(row) {
   return { ...row, systems: { ...row.systems } };
@@ -10,6 +21,18 @@ export function createDemoRepository() {
   let auditSequence = 98219;
 
   return {
+    getSnapshot() {
+      return {
+        cashflows,
+        checklist,
+        drivers,
+        lendingRows,
+        metricDictionary,
+        metrics,
+        navigation,
+        positions,
+      };
+    },
     getExceptions() {
       return exceptionStore;
     },

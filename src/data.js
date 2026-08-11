@@ -267,14 +267,14 @@ export const cashflows = [
 ];
 
 export const positions = [
-  { security: 'KTB 03500-2806', issuer: 'Republic of Korea', rating: 'AAA', maturity: '0–1Y', assetClass: 'Government', current: 184600000000, delta: -820000000, contribution: -6.6, available: 12000000000, fee: 0.42 },
-  { security: 'Samsung Elec 3.10 2029', issuer: 'Samsung Electronics', rating: 'AA-', maturity: '1–3Y', assetClass: 'Corporate', current: 98200000000, delta: -440000000, contribution: -3.5, available: 8400000000, fee: 0.58 },
-  { security: 'Korea Housing 2.65 2031', issuer: 'Korea Housing Finance', rating: 'AAA', maturity: '3–5Y', assetClass: 'Agency', current: 84600000000, delta: -310000000, contribution: -2.5, available: 6100000000, fee: 0.31 },
-  { security: 'SK Hynix 3.20 2028', issuer: 'SK Hynix', rating: 'A+', maturity: '1–3Y', assetClass: 'Corporate', current: 71200000000, delta: 180000000, contribution: 1.4, available: 5200000000, fee: 0.72 },
-  { security: 'KTB 02625-2709', issuer: 'Republic of Korea', rating: 'AAA', maturity: '0–1Y', assetClass: 'Government', current: 63800000000, delta: 90000000, contribution: 0.7, available: 3400000000, fee: 0.27 },
-  { security: 'LG Chem 3.40 2030', issuer: 'LG Chem', rating: 'AA-', maturity: '3–5Y', assetClass: 'Corporate', current: 52100000000, delta: -70000000, contribution: -0.6, available: 2900000000, fee: 0.64 },
-  { security: 'Hyundai Capital 3.65 2032', issuer: 'Hyundai Capital', rating: 'A+', maturity: '5–7Y', assetClass: 'Corporate', current: 47800000000, delta: -130000000, contribution: -1.0, available: 1800000000, fee: 0.81 },
-  { security: 'Korea Gas 2.95 2027', issuer: 'Korea Gas', rating: 'AA', maturity: '0–1Y', assetClass: 'Corporate', current: 38600000000, delta: 60000000, contribution: 0.5, available: 2100000000, fee: 0.49 },
+  { security: 'KTB 03500-2806', isin: 'KR103501GCS8', issuer: 'Republic of Korea', rating: 'AAA', maturity: '0–1Y', assetClass: 'Government', current: 184600000000, delta: -820000000, contribution: -6.6, available: 12000000000, fee: 0.42 },
+  { security: 'Samsung Elec 3.10 2029', isin: 'KR6005931FB1', issuer: 'Samsung Electronics', rating: 'AA-', maturity: '1–3Y', assetClass: 'Corporate', current: 98200000000, delta: -440000000, contribution: -3.5, available: 8400000000, fee: 0.58 },
+  { security: 'Korea Housing 2.65 2031', isin: 'KR350101GC52', issuer: 'Korea Housing Finance', rating: 'AAA', maturity: '3–5Y', assetClass: 'Agency', current: 84600000000, delta: -310000000, contribution: -2.5, available: 6100000000, fee: 0.31 },
+  { security: 'SK Hynix 3.20 2028', isin: 'KR6000661EA7', issuer: 'SK Hynix', rating: 'A+', maturity: '1–3Y', assetClass: 'Corporate', current: 71200000000, delta: 180000000, contribution: 1.4, available: 5200000000, fee: 0.72 },
+  { security: 'KTB 02625-2709', isin: 'KR103501GCQ4', issuer: 'Republic of Korea', rating: 'AAA', maturity: '0–1Y', assetClass: 'Government', current: 63800000000, delta: 90000000, contribution: 0.7, available: 3400000000, fee: 0.27 },
+  { security: 'LG Chem 3.40 2030', isin: 'KR6051911FC6', issuer: 'LG Chem', rating: 'AA-', maturity: '3–5Y', assetClass: 'Corporate', current: 52100000000, delta: -70000000, contribution: -0.6, available: 2900000000, fee: 0.64 },
+  { security: 'Hyundai Capital 3.65 2032', isin: 'KR381701FC26', issuer: 'Hyundai Capital', rating: 'A+', maturity: '5–7Y', assetClass: 'Corporate', current: 47800000000, delta: -130000000, contribution: -1.0, available: 1800000000, fee: 0.81 },
+  { security: 'Korea Gas 2.95 2027', isin: 'KR6036261E70', issuer: 'Korea Gas', rating: 'AA', maturity: '0–1Y', assetClass: 'Corporate', current: 38600000000, delta: 60000000, contribution: 0.5, available: 2100000000, fee: 0.49 },
 ];
 
 export const lendingRows = [

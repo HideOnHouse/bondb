@@ -11,7 +11,7 @@ import {
   sortExceptions,
 } from '../src/state.js';
 import { createDemoRepository } from '../src/repository.js';
-import { validateScenario } from '../src/scenario.js';
+import { calculateScenarioImpact, validateScenario } from '../src/scenario.js';
 
 const rows = [
   { id: 'warning', severity: 'Warning', dueSort: 1, amount: 100 },
@@ -29,9 +29,9 @@ test('sortExceptions keeps severity, due, and impact priority', () => {
 
 test('filterExceptions applies severity, status, and global search together', () => {
   const result = filterExceptions([
-    { id: 'EX-1', severity: 'High', status: 'New', security: 'KTB 2028', type: 'Amount mismatch', owner: 'J. Kim', counterparty: 'Aster' , dueSort: 1, amount: 20 },
+    { id: 'EX-1', isin: 'KR1234567890', severity: 'High', status: 'New', security: 'KTB 2028', type: 'Amount mismatch', owner: 'J. Kim', counterparty: 'Aster', dueSort: 1, amount: 20 },
     { id: 'EX-2', severity: 'Warning', status: 'Waiting', security: 'LG Chem 2030', type: 'Date mismatch', owner: 'M. Lee', counterparty: 'Northstar', dueSort: 2, amount: 30 },
-  ], { severity: 'High', status: 'New', search: 'ktb' });
+  ], { severity: 'High', status: 'New', search: 'kr123' });
   assert.equal(result.length, 1);
   assert.equal(result[0].id, 'EX-1');
 });
@@ -54,6 +54,7 @@ test('readContext rejects unsafe or unsupported URL state', () => {
     currency: 'KRW',
     compare: 'previous-day',
   });
+  assert.equal(readContext('?asOf=2026-99-99').asOf, '2026-08-11');
   assert.deepEqual(readExceptionFilters('?severity=bad&status=bad&q=%3Cscript%3E'), {
     severity: 'all',
     status: 'all',
@@ -68,6 +69,11 @@ test('validateScenario rejects non-finite and out-of-range assumptions', () => {
   assert.equal(result.valid, false);
   assert.match(result.errors.rate, /between/);
   assert.match(result.errors.fx, /number/);
+});
+
+test('scenario lending fee treats basis points as basis points', () => {
+  const result = calculateScenarioImpact({ rate: 0, spread: 0, fx: 1, fee: 5, lendingRatio: 70, haircut: 2 });
+  assert.equal(Math.round(result.revenuePerDay), 378575);
 });
 
 test('demo repository records exception updates with a new audit event', () => {

@@ -36,7 +36,7 @@ export function filterExceptions(rows, { severity = 'all', status = 'all', searc
   return sortExceptions(rows).filter((row) => {
     const matchesSeverity = severity === 'all' || row.severity === severity;
     const matchesStatus = status === 'all' || row.status === status;
-    const haystack = `${row.id} ${row.security} ${row.type} ${row.owner} ${row.counterparty}`.toLowerCase();
+    const haystack = `${row.id} ${row.isin || ''} ${row.tradeId || ''} ${row.journalId || ''} ${row.security} ${row.type} ${row.owner} ${row.counterparty}`.toLowerCase();
     return matchesSeverity && matchesStatus && (!normalizedSearch || haystack.includes(normalizedSearch));
   });
 }
@@ -72,7 +72,7 @@ export function formatSignedNumber(value, digits = 1) {
 export function readContext(search = '') {
   const params = new URLSearchParams(search);
   const requestedAsOf = params.get('asOf') || '';
-  const asOf = /^\d{4}-\d{2}-\d{2}$/.test(requestedAsOf) ? requestedAsOf : '2026-08-11';
+  const asOf = isValidCalendarDate(requestedAsOf) ? requestedAsOf : '2026-08-11';
   const portfolio = contextOptions.portfolios.includes(params.get('portfolio'))
     ? params.get('portfolio')
     : 'Portfolio A';
@@ -90,12 +90,18 @@ export function readContext(search = '') {
   };
 }
 
+export function isValidCalendarDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 export function readExceptionFilters(search = '') {
   const params = new URLSearchParams(search);
   const severity = ['all', 'Critical', 'High', 'Warning', 'Info'].includes(params.get('severity'))
     ? params.get('severity')
     : 'all';
-  const status = ['all', 'New', 'Investigating', 'Waiting', 'Resolved'].includes(params.get('status'))
+  const status = ['all', 'New', 'Investigating', 'Waiting', 'Resolved', 'Waived'].includes(params.get('status'))
     ? params.get('status')
     : 'all';
   return {

@@ -23,5 +23,6 @@ core investigation flows can be exercised without internal data sources.
   drawer with metric lineage, scenario reset, and auditable exception update
   feedback.
 
-The reference requirements remain in `docs/design-document.md` and
-`docs/todo.md`.
+The implementation follows the supplied Investment Operations Intelligence
+Workbench design package. This branch intentionally keeps the reference
+documents outside the runnable demo so the application can remain dependency-free.
