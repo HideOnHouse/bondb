@@ -12,6 +12,7 @@ import {
 } from '../src/state.js';
 import { createDemoRepository } from '../src/repository.js';
 import { calculateScenarioImpact, validateScenario } from '../src/scenario.js';
+import { explainMetricForException, filterExceptionsForMetric, statusTone } from '../src/operations.js';
 
 const rows = [
   { id: 'warning', severity: 'Warning', dueSort: 1, amount: 100 },
@@ -74,6 +75,7 @@ test('validateScenario rejects non-finite and out-of-range assumptions', () => {
 test('scenario lending fee treats basis points as basis points', () => {
   const result = calculateScenarioImpact({ rate: 0, spread: 0, fx: 1, fee: 5, lendingRatio: 70, haircut: 2 });
   assert.equal(Math.round(result.revenuePerDay), 378575);
+  assert.equal(result.pnl, 85000000);
 });
 
 test('demo repository records exception updates with a new audit event', () => {
@@ -86,6 +88,21 @@ test('demo repository records exception updates with a new audit event', () => {
   assert.equal(result.row.owner, 'M. Lee');
   assert.equal(result.row.status, 'Resolved');
   assert.equal(repository.getAuditEvents()[0].result, result.auditId);
+});
+
+test('operations filters distinguish settlement failures from date mismatches', () => {
+  const rows = [
+    { type: 'Settlement fail', severity: 'Critical' },
+    { type: 'Settlement date mismatch', severity: 'High' },
+  ];
+  assert.deepEqual(filterExceptionsForMetric(rows, 'settlement-fail'), [rows[0]]);
+});
+
+test('operations maps exception explanations and workflow tones', () => {
+  assert.equal(explainMetricForException({ type: 'Collateral shortfall' }), 'lending');
+  assert.equal(explainMetricForException({ type: 'Book value mismatch' }), 'book-value');
+  assert.equal(statusTone('Waiting'), 'waiting');
+  assert.equal(statusTone('Resolved'), 'resolved');
 });
 
 test('formatSignedPercent handles compare values and zero safely', () => {

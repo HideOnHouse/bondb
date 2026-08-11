@@ -1,5 +1,6 @@
 import { createDemoRepository } from './repository.js';
 import { calculateScenarioImpact, validateScenario } from './scenario.js';
+import { explainMetricForException, filterExceptionsForMetric, statusTone } from './operations.js';
 import {
   compareLabels,
   contextSearch,
@@ -97,16 +98,6 @@ function statusBadge(label, tone = 'neutral') {
   return `<span class="status-badge status-${tone}"><span class="status-dot"></span>${escapeHtml(label)}</span>`;
 }
 
-function statusTone(status) {
-  return {
-    New: 'new',
-    Investigating: 'investigating',
-    Waiting: 'waiting',
-    Resolved: 'resolved',
-    Waived: 'waived',
-  }[status] || 'neutral';
-}
-
 function severityBadge(severity) {
   return `<span class="severity severity-${severity.toLowerCase()}"><span class="severity-mark">${severity === 'Critical' ? '!' : severity === 'High' ? '↑' : severity === 'Warning' ? '•' : 'i'}</span>${severity}</span>`;
 }
@@ -147,18 +138,8 @@ function syncUrl() {
   window.history.replaceState(null, '', nextUrl);
 }
 
-const metricExceptionMatchers = {
-  'book-value': (row) => row.type.toLowerCase().includes('book value'),
-  pnl: (row) => ['book value mismatch', 'accrued interest'].includes(row.type.toLowerCase()),
-  settlement: (row) => ['settlement', 'trade amount'].some((term) => row.type.toLowerCase().includes(term)),
-  'settlement-fail': (row) => row.type.toLowerCase().includes('settlement'),
-  lending: (row) => row.type.toLowerCase().includes('collateral'),
-  critical: (row) => row.severity === 'Critical',
-};
-
 function filterCockpitExceptions(rows) {
-  const matcher = metricExceptionMatchers[state.activeMetric];
-  return matcher ? rows.filter(matcher) : rows;
+  return filterExceptionsForMetric(rows, state.activeMetric);
 }
 
 function renderDriverRow(driver) {
@@ -469,7 +450,7 @@ function renderSecurityDetail(row) {
 }
 
 function renderOperations(filteredExceptions) {
-  const selected = exceptions.find((row) => row.id === state.selectedException) || filteredExceptions[0];
+  const selected = filteredExceptions.find((row) => row.id === state.selectedException) || filteredExceptions[0];
   return `
     <section class="operations-layout">
       <article class="panel operations-queue">
@@ -488,7 +469,7 @@ function renderOperationsDetail(row) {
       <div class="detail-heading"><div><span class="eyebrow">${escapeHtml(row.id)} · EXCEPTION DETAIL</span><h2>${escapeHtml(row.type)}</h2><p>${escapeHtml(row.security)} · ${escapeHtml(row.isin)}</p></div>${severityBadge(row.severity)}</div>
       <div class="detail-alert"><span>${icon('alert')}</span><div><strong>${formatContextAmount(row.amount, state.context.currency)} impact</strong><p>${escapeHtml(row.reason)}</p></div></div>
       <div class="detail-section"><span class="eyebrow">SYSTEM COMPARISON</span><div class="comparison-grid">${Object.entries(row.systems).map(([system, value]) => `<div><span>${escapeHtml(system)}</span><strong>${formatSourceValue(value)}</strong></div>`).join('')}</div></div>
-      <div class="detail-form"><label for="reason">Root cause / handling note</label><textarea id="reason" rows="3" placeholder="Add an auditable handling note...">${escapeHtml(row.reason)}</textarea><div class="form-row"><label for="owner">Owner<select id="owner"><option>${escapeHtml(row.owner)}</option><option>J. Kim</option><option>M. Lee</option><option>S. Park</option></select></label><label for="status">Status<select id="status"><option>${escapeHtml(row.status)}</option><option>New</option><option>Investigating</option><option>Waiting</option><option>Resolved</option></select></label></div><div class="form-actions"><button class="button button-secondary" data-action="open-explain-exception">Explain source</button><button class="button button-primary" data-action="save-exception" data-exception-id="${escapeHtml(row.id)}">Save update</button></div></div>
+      <div class="detail-form"><label for="reason">Root cause / handling note</label><textarea id="reason" rows="3" placeholder="Add an auditable handling note...">${escapeHtml(row.reason)}</textarea><div class="form-row"><label for="owner">Owner<select id="owner"><option>${escapeHtml(row.owner)}</option><option>J. Kim</option><option>M. Lee</option><option>S. Park</option></select></label><label for="status">Status<select id="status"><option>${escapeHtml(row.status)}</option><option>New</option><option>Investigating</option><option>Waiting</option><option>Resolved</option></select></label></div><div class="form-actions"><button class="button button-secondary" data-action="open-explain-exception" data-exception-id="${escapeHtml(row.id)}">Explain source</button><button class="button button-primary" data-action="save-exception" data-exception-id="${escapeHtml(row.id)}">Save update</button></div></div>
       <div class="audit-note">${icon('info')} Save is repository-confirmed and creates an Audit ID. Waived requires reason and Manager approval.</div>
     </article>
   `;
@@ -666,6 +647,10 @@ function bindEvents() {
     const element = event.target;
     if (element.matches('[data-filter]')) {
       state.exceptionFilters[element.dataset.filter] = element.value;
+      const filtered = filterExceptions(exceptions, state.exceptionFilters);
+      if (state.selectedException && !filtered.some((row) => row.id === state.selectedException)) {
+        state.selectedException = null;
+      }
       render();
       return;
     }
@@ -777,8 +762,13 @@ const actionHandlers = {
       showToast(`Unable to save update: ${error.message}`);
     }
   },
-  'open-explain-exception': () => {
-    state.explainMetric = 'settlement';
+  'open-explain-exception': (element) => {
+    const exception = exceptions.find((row) => row.id === element.dataset.exceptionId);
+    if (!exception) {
+      showToast('Unable to explain the selected exception');
+      return;
+    }
+    state.explainMetric = explainMetricForException(exception);
     state.selectedException = null;
     render();
   },
