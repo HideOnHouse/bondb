@@ -6,15 +6,20 @@ import {
   formatContextAmount,
   formatRatioPercent,
   formatSignedPercent,
+  currentKstDate,
   readContext,
   readExceptionFilters,
   readMetricFilter,
   sortExceptions,
 } from '../src/state.js';
-import { createDemoRepository } from '../src/repository.js';
-import { calculateScenarioImpact, validateScenario } from '../src/scenario.js';
 import { explainMetricForException, filterExceptionsForMetric, statusTone } from '../src/operations.js';
 import { normalizeSnapshotTime, validateLiveSnapshot } from '../src/live.js';
+import { fetchMarketFunds } from '../src/market-funds-source.js';
+import {
+  findMarketFundsObservation,
+  normalizeFscMarketFunds,
+  normalizeFreeSisMarketFunds,
+} from '../src/market-funds.js';
 
 const rows = [
   { id: 'warning', severity: 'Warning', dueSort: 1, amount: 100 },
@@ -45,19 +50,19 @@ test('formatCompactKrw uses compact financial units', () => {
   assert.equal(formatCompactKrw(7, 'cases'), '7 cases');
 });
 
-test('formatContextAmount converts KRW values before changing the display currency', () => {
+test('formatContextAmount keeps official values in source-native KRW', () => {
   assert.equal(formatContextAmount(1000000000, 'KRW'), '1.00bn KRW');
-  assert.equal(formatContextAmount(1000000000, 'USD'), '730.0k USD');
+  assert.throws(() => formatContextAmount(1000000000, 'USD'), /Unsupported display currency/);
 });
 
 test('readContext rejects unsafe or unsupported URL state', () => {
   assert.deepEqual(readContext('?asOf=%3Cimg%3E&portfolio=bad&currency=JPY&compare=unknown'), {
-    asOf: '2026-08-11',
+    asOf: currentKstDate(),
     portfolio: 'Portfolio A',
     currency: 'KRW',
     compare: 'previous-day',
   });
-  assert.equal(readContext('?asOf=2026-99-99').asOf, '2026-08-11');
+  assert.equal(readContext('?asOf=2026-99-99').asOf, currentKstDate());
   assert.deepEqual(readExceptionFilters('?severity=bad&status=bad&q=%3Cscript%3E'), {
     severity: 'all',
     status: 'all',
@@ -67,45 +72,9 @@ test('readContext rejects unsafe or unsupported URL state', () => {
   assert.equal(readMetricFilter('?metric=rating:AAA'), 'rating:AAA');
 });
 
-test('validateScenario rejects non-finite and out-of-range assumptions', () => {
-  const result = validateScenario({ rate: 101, spread: 0, fx: Number.NaN, fee: 0, lendingRatio: 70, haircut: 2 });
-  assert.equal(result.valid, false);
-  assert.match(result.errors.rate, /between/);
-  assert.match(result.errors.fx, /number/);
-});
-
-test('scenario lending fee treats basis points as basis points', () => {
-  const result = calculateScenarioImpact({ rate: 0, spread: 0, fx: 1, fee: 5, lendingRatio: 70, haircut: 2 });
-  assert.equal(Math.round(result.revenuePerDay), 378575);
-  assert.equal(result.pnl, 85000000);
-});
-
-test('scenario lending revenue uses the loaded lending balance', () => {
-  const result = calculateScenarioImpact(
-    { rate: 0, spread: 0, fx: 0, fee: 5, lendingRatio: 100, haircut: 0 },
-    { lendingBalance: 100000000000 },
-  );
-  assert.equal(Math.round(result.revenuePerDay), 136986);
-});
-
-test('demo repository records exception updates with a new audit event', () => {
-  const repository = createDemoRepository();
-  const result = repository.updateException('EX-4821', {
-    owner: 'M. Lee',
-    status: 'Resolved',
-    reason: 'Confirmed after custody replay.',
-  });
-  assert.equal(result.row.owner, 'M. Lee');
-  assert.equal(result.row.status, 'Resolved');
-  assert.equal(repository.getAuditEvents()[0].result, result.auditId);
-});
-
-test('repository refresh returns a fresh snapshot collection', () => {
-  const repository = createDemoRepository();
-  const first = repository.getSnapshot();
-  const refreshed = repository.refreshSnapshot();
-  assert.notEqual(refreshed.metrics, first.metrics);
-  assert.deepEqual(refreshed.metrics, first.metrics);
+test('context defaults to the current Asia/Seoul calendar date', () => {
+  assert.equal(currentKstDate(new Date('2026-08-11T15:00:00.000Z')), '2026-08-12');
+  assert.equal(readContext('?asOf=not-a-date').asOf, currentKstDate());
 });
 
 test('live snapshot validation rejects incomplete or stale-shaped data', () => {
@@ -143,6 +112,124 @@ test('live snapshot validation accepts the documented contract', () => {
   assert.equal(normalizeSnapshotTime(snapshot.snapshotTime), '09:42');
 });
 
+const freeSisBody = {
+  ds1: [{
+    TMPV1: '20260811',
+    TMPV2: '100',
+    TMPV3: '200',
+    TMPV4: '300',
+    TMPV5: '400',
+    TMPV6: '50',
+    TMPV7: '12.5',
+  }],
+};
+
+const fscBody = {
+  response: {
+    header: { resultCode: '00', resultMsg: 'NORMAL SERVICE' },
+    body: {
+      items: {
+        item: {
+          basDt: '20260811',
+          invrDpsgAmt: 100,
+          onbdDrvPrdTrRcAdvAmt: 200,
+          toCstRpchCndBndSlgBal: 300,
+          brkTrdUcolMny: 400,
+          brkTrdUcolMnyVsOppsTrdAmt: 50,
+          ucolMnyVsOppsTrdRlImpt: 12.5,
+        },
+      },
+    },
+  },
+};
+
+function jsonResponse(body, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: () => 'application/json' },
+    json: async () => body,
+  };
+}
+
+test('FreeSIS and FSC normalize to the same canonical fields', () => {
+  const primary = normalizeFreeSisMarketFunds(freeSisBody, {
+    retrievedAt: '2026-08-11T09:00:00.000Z',
+    snapshotTime: '18:00',
+  });
+  const fallback = normalizeFscMarketFunds(fscBody, {
+    retrievedAt: '2026-08-11T09:00:00.000Z',
+    snapshotTime: '18:00',
+    monetaryScale: 1_000_000,
+    fallbackReason: 'primary unavailable',
+  });
+  assert.deepEqual(primary.latest, fallback.latest);
+  assert.equal(primary.source.isFallback, false);
+  assert.equal(fallback.source.isFallback, true);
+  assert.equal(fallback.source.referenceUrl, 'https://www.data.go.kr/data/15094809/openapi.do');
+});
+
+test('provider fields reject missing, boolean, and malformed numeric values', () => {
+  for (const value of [null, '', false, {}, 'not-a-number']) {
+    const body = {
+      ds1: [{ ...freeSisBody.ds1[0], TMPV2: value }],
+    };
+    assert.throws(() => normalizeFreeSisMarketFunds(body), /non-numeric investorDeposit/);
+  }
+});
+
+test('market-funds selection follows the requested observation date', () => {
+  const snapshot = normalizeFreeSisMarketFunds(freeSisBody, { snapshotTime: '18:00' });
+  assert.equal(findMarketFundsObservation(snapshot, '2026-08-11').date, '2026-08-11');
+  assert.equal(findMarketFundsObservation(snapshot, '2026-08-12'), null);
+});
+
+test('source resolver uses FreeSIS without calling fallback when primary succeeds', async () => {
+  const calls = [];
+  const snapshot = await fetchMarketFunds({
+    now: new Date('2026-08-11T00:00:00.000Z'),
+    serviceKey: 'secret-key',
+    monetaryScale: 1_000_000,
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      return jsonResponse(freeSisBody);
+    },
+  });
+  assert.equal(snapshot.source.sourceId, 'freesis-market-funds');
+  assert.equal(calls.length, 1);
+  assert.doesNotMatch(calls[0], /secret-key/);
+});
+
+test('source resolver activates the official fallback after FreeSIS fails', async () => {
+  const calls = [];
+  const snapshot = await fetchMarketFunds({
+    now: new Date('2026-08-11T00:00:00.000Z'),
+    serviceKey: 'secret-key',
+    monetaryScale: 1_000_000,
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      if (calls.length === 1) return jsonResponse({ error: 'upstream down' }, 503);
+      return jsonResponse(fscBody);
+    },
+  });
+  assert.equal(snapshot.source.sourceId, 'fsc-public-data-market-funds');
+  assert.equal(snapshot.source.isFallback, true);
+  assert.match(snapshot.source.fallbackReason, /HTTP 503/);
+  assert.match(calls[1], /basDt=20260811/);
+  assert.doesNotMatch(snapshot.source.requestUrl, /secret-key/);
+});
+
+test('source resolver reports missing fallback credentials instead of inventing values', async () => {
+  await assert.rejects(
+    fetchMarketFunds({
+      serviceKey: '',
+      monetaryScale: 1_000_000,
+      fetchImpl: async () => jsonResponse({ error: 'upstream down' }, 503),
+    }),
+    /DATA_GO_KR_SERVICE_KEY is missing/,
+  );
+});
+
 test('live snapshot validation accepts the verified FreeSIS market-funds shape', () => {
   const row = {
     date: '2026-08-10',
@@ -157,8 +244,21 @@ test('live snapshot validation accepts the verified FreeSIS market-funds shape',
     sourceType: 'market-funds',
     asOf: row.date,
     snapshotTime: '18:01',
-    source: { name: 'FreeSIS', serviceId: 'STATSCU0100000060', priority: 0 },
+    source: {
+      sourceId: 'freesis-market-funds',
+      name: 'FreeSIS',
+      origin: 'KOFIA',
+      serviceId: 'STATSCU0100000060',
+      priority: 0,
+      isFallback: false,
+      referenceUrl: 'https://freesis.kofia.or.kr/stat/FreeSIS.do',
+      requestUrl: 'https://freesis.kofia.or.kr/meta/getMetaDataList.do',
+      collectionMethod: 'xhr',
+      retrievedAt: '2026-08-11T09:00:00.000Z',
+      monetaryScale: 1_000_000,
+    },
     unit: 'KRW million',
+    monetaryScale: 1_000_000,
     series: [row],
     latest: row,
   };

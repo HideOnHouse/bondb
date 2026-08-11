@@ -7,13 +7,8 @@ export const compareLabels = {
 
 export const contextOptions = {
   portfolios: ['Portfolio A', 'Portfolio B', 'All portfolios'],
-  currencies: ['KRW', 'USD'],
+  currencies: ['KRW'],
   compares: Object.keys(compareLabels),
-};
-
-export const currencyRates = {
-  KRW: 1,
-  USD: 0.00073,
 };
 
 export const severityOrder = {
@@ -54,9 +49,9 @@ export function formatCompactKrw(value, unit = 'KRW') {
 }
 
 export function formatContextAmount(value, currency = 'KRW', unit = 'KRW') {
+  if (currency !== 'KRW') throw new Error(`Unsupported display currency: ${currency}`);
   if (unit !== 'KRW') return formatCompactKrw(value, unit);
-  const rate = currencyRates[currency] || currencyRates.KRW;
-  return formatCompactKrw(value * rate, currency);
+  return formatCompactKrw(value, currency);
 }
 
 export function formatSignedPercent(value, total) {
@@ -78,7 +73,7 @@ export function formatSignedNumber(value, digits = 1) {
 export function readContext(search = '') {
   const params = new URLSearchParams(search);
   const requestedAsOf = params.get('asOf') || '';
-  const asOf = isValidCalendarDate(requestedAsOf) ? requestedAsOf : '2026-08-11';
+  const asOf = isValidCalendarDate(requestedAsOf) ? requestedAsOf : currentKstDate();
   const portfolio = contextOptions.portfolios.includes(params.get('portfolio'))
     ? params.get('portfolio')
     : 'Portfolio A';
@@ -94,6 +89,17 @@ export function readContext(search = '') {
     currency,
     compare,
   };
+}
+
+export function currentKstDate(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.filter(({ type }) => type !== 'literal').map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 export function isValidCalendarDate(value) {

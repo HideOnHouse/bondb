@@ -2,24 +2,23 @@
 
 ## Source priority policy
 
-This is the intended source-resolution policy when multiple providers for the
-same indicator are wired:
+The application resolves the public market-funds indicator in this order:
 
-1. FreeSIS original data
-2. Official public APIs connected to FreeSIS
-3. Official source institutions such as SEIBro, KOFIA Bond, KRX, ECOS, and DART
-4. Official overseas APIs
-5. Unofficial sources such as FinanceDataReader or yfinance
+1. FreeSIS original data, priority `0`.
+2. Financial Services Commission Public Data Portal transport for the KOFIA
+   statistics, priority `1`.
 
-FreeSIS is the source of truth for the indicators it publishes. The current
-runtime has one verified public collector, FreeSIS, plus an explicit
-`SNAPSHOT_URL` operator override; it does not yet compare provider priorities
-automatically. When additional providers are added, the resolver must compare
-their registered priorities before selecting a value.
+The second provider improves transport availability but is not an independent
+statistical origin: both channels publish KOFIA statistics. No synthetic,
+last-known, or partial source is used when both official requests fail.
 
-## Verified live source
+Portfolio-specific book value, P&L, holdings, settlement workflow, lending
+inventory, and exception data are private and must come from an authorized
+`SNAPSHOT_URL`.
 
-The default live source is FreeSIS **증시자금추이** (market funds trend).
+## Primary source: FreeSIS
+
+The verified live source is FreeSIS `증시자금추이`:
 
 - Registry page:
   <https://freesis.kofia.or.kr/stat/FreeSIS.do?parentDivId=MSIS10000000000000&serviceId=STATSCU0100000060>
@@ -27,10 +26,11 @@ The default live source is FreeSIS **증시자금추이** (market funds trend).
 - Service ID: `STATSCU0100000060`
 - Source priority: `0`
 - Collection method: verified browser `XHR`
-- Data request:
+- Request:
   `POST https://freesis.kofia.or.kr/meta/getMetaDataList.do`
-- Registry implementation: [`src/source-registry.js`](../src/source-registry.js)
-- Collector implementation: [`server.mjs`](../server.mjs)
+- Object: `STATSCU0100000060BO`
+- Registry: [`src/source-registry.js`](../src/source-registry.js)
+- Collector: [`src/market-funds-source.js`](../src/market-funds-source.js)
 
 The request body is:
 
@@ -47,60 +47,94 @@ The request body is:
 }
 ```
 
-`tmpV45` is the start date three months before the current Asia/Seoul date.
-`tmpV46` is the current Asia/Seoul date.
+`tmpV45` is three months before the current Asia/Seoul date. `tmpV46` is the
+current Asia/Seoul date. The response's first/latest observation is selected
+after date normalization and descending sort.
 
-## Response mapping
+## Official fallback: FSC Public Data Portal
 
-FreeSIS returns rows in `ds1`. Values `TMPV2` through `TMPV6` are in million
-KRW. `TMPV7` is a percentage.
+The official fallback is dataset `15094809`, 금융위원회_금융투자협회종합통계정보:
 
-| FreeSIS field | Application field | Meaning | Unit |
-| --- | --- | --- | --- |
-| `TMPV1` | `date` | Observation date | `YYYY-MM-DD` |
-| `TMPV2` | `investorDeposit` | Investor deposits, excluding exchange-traded derivatives deposits | KRW million |
-| `TMPV3` | `derivativesDeposit` | Exchange-traded derivatives deposits | KRW million |
-| `TMPV4` | `rpBalance` | Customer RP sell balance | KRW million |
-| `TMPV5` | `receivables` | Brokerage receivables | KRW million |
-| `TMPV6` | `forcedSaleAmount` | Actual forced-sale amount | KRW million |
-| `TMPV7` | `forcedSaleRatio` | Forced-sale amount / receivables | `%` |
+- Dataset page: <https://www.data.go.kr/data/15094809/openapi.do>
+- Provider: Financial Services Commission
+- Statistical origin: KOFIA
+- Source priority: `1`
+- API:
+  `GET https://apis.data.go.kr/1160100/service/GetKofiaStatisticsInfoService/getSecuritiesMarketTotalCapitalInfo`
+- Collection method: official REST API
+- Registry: [`src/source-registry.js`](../src/source-registry.js)
+- Collector: [`src/market-funds-source.js`](../src/market-funds-source.js)
 
-The first returned row is treated as the latest observation. The API response
-also includes `retrievedAt`, `isFallback: false`, the source registry IDs, and
-the request URL.
+The server sends `serviceKey`, `numOfRows=1`, `pageNo=1`, `basDt=YYYYMMDD`,
+and `_type=json`. It checks the current Asia/Seoul date and the prior six
+calendar dates until an observation is returned. The service key is never
+included in the snapshot metadata, browser code, logs, or public source link.
+
+Configure the server-side credentials:
+
+```bash
+DATA_GO_KR_SERVICE_KEY='your-private-key'
+DATA_GO_KR_MONETARY_SCALE='1000000'
+```
+
+Obtain the key by signing in at <https://www.data.go.kr>, opening dataset
+`15094809`, selecting `활용신청`, and copying the `일반 인증키` from
+`마이페이지 → 데이터 활용 → Open API`. Keep it outside the repository.
+
+The API documents the five monetary fields as numbers but does not document
+their scale. `DATA_GO_KR_MONETARY_SCALE` is therefore mandatory and must be
+set only after an authenticated overlap comparison with FreeSIS confirms the
+scale. A missing or invalid scale disables the fallback instead of risking an
+incorrect conversion.
+
+## Canonical response mapping
+
+Both official transports are normalized to a market-funds snapshot with
+`source`, `sourceType`, `asOf`, `snapshotTime`, `unit`, `monetaryScale`,
+`series`, and `latest`.
+
+| Meaning | FreeSIS | FSC API | Application field | Unit |
+| --- | --- | --- | --- | --- |
+| Observation date | `TMPV1` | `basDt` | `date` | `YYYY-MM-DD` |
+| Investor deposits excluding derivatives deposits | `TMPV2` | `invrDpsgAmt` | `investorDeposit` | provider monetary unit |
+| Exchange-traded derivatives deposits | `TMPV3` | `onbdDrvPrdTrRcAdvAmt` | `derivativesDeposit` | provider monetary unit |
+| Customer RP sell balance | `TMPV4` | `toCstRpchCndBndSlgBal` | `rpBalance` | provider monetary unit |
+| Brokerage receivables | `TMPV5` | `brkTrdUcolMny` | `receivables` | provider monetary unit |
+| Actual forced-sale amount | `TMPV6` | `brkTrdUcolMnyVsOppsTrdAmt` | `forcedSaleAmount` | provider monetary unit |
+| Forced-sale ratio | `TMPV7` | `ucolMnyVsOppsTrdRlImpt` | `forcedSaleRatio` | `%` |
+
+FreeSIS monetary values are KRW million. The FSC monetary scale must be
+operator-confirmed before use; the UI multiplies monetary fields by the
+validated `monetaryScale` and displays source-native KRW.
 
 ## Application behavior
 
 The server endpoint `/api/snapshot`:
 
-1. Uses `SNAPSHOT_URL` when an internal portfolio snapshot is configured.
-2. Otherwise fetches the verified FreeSIS market-funds XHR.
-3. Returns `Cache-Control: no-store`.
-4. Returns an explicit error when the source is unavailable or returns invalid
-   data.
+1. Uses `SNAPSHOT_URL` when an authorized internal portfolio snapshot is
+   configured.
+2. Otherwise requests FreeSIS first.
+3. Requests the FSC API only when FreeSIS fails.
+4. Marks fallback snapshots with `isFallback: true` and includes the primary
+   failure reason, official reference URL, provider, priority, observation date,
+   and retrieval timestamp.
+5. Returns `Cache-Control: no-store`.
+6. Returns an explicit error when no validated official source is available.
 
-The browser refresh action requests `/api/snapshot` again. It does not reuse the
-previous response.
+The browser refresh action requests `/api/snapshot` again and does not reuse the
+previous response. Public market-funds snapshots are validated in
+[`src/live.js`](../src/live.js) and rendered in [`src/main.js`](../src/main.js).
 
-The live response is validated in [`src/live.js`](../src/live.js) and rendered
-in [`src/main.js`](../src/main.js). The default UI therefore shows actual
-FreeSIS market-funds values rather than bundled demo numbers.
+## Private internal data
 
-## Internal portfolio data
-
-FreeSIS does not publish this application's portfolio-specific book value, P&L,
-settlement workflow, holdings, or exception queue. Those values must come from
-an authorized internal source.
-
-Configure an internal snapshot endpoint with:
+FreeSIS and the FSC dataset do not publish the application's portfolio-specific
+records. Configure an authorized internal endpoint:
 
 ```bash
-SNAPSHOT_URL=https://internal.example/snapshot npm run dev
+SNAPSHOT_URL=https://internal.example/snapshot
 ```
 
 The endpoint must return JSON containing:
-
-- `Content-Type: application/json`
 
 - `asOf`
 - `snapshotTime`
@@ -114,36 +148,28 @@ The endpoint must return JSON containing:
 - `exceptions`
 - `auditEvents`
 
-The `metrics` array must contain finite numeric `value` entries for all six
-required IDs:
+The `metrics` array must contain finite numeric `value` entries for:
+`book-value`, `pnl`, `settlement`, `settlement-fail`, `lending`, and `critical`.
+The internal endpoint is proxied server-side; credentials must not be placed in
+browser code. `SNAPSHOT_URL` is an explicit authorized override, not a public
+fallback.
 
-- `book-value`
-- `pnl`
-- `settlement`
-- `settlement-fail`
-- `lending`
-- `critical`
+## Configuration and deployment
 
-The internal endpoint is proxied server-side; credentials should not be placed
-in browser code. Setting `SNAPSHOT_URL` is an explicit operator override of the
-default FreeSIS source, not an automatic source-priority decision.
+Non-secret provider metadata is versioned in
+[`src/source-registry.js`](../src/source-registry.js). Do not add API keys to a
+repository `config.yaml`. For production, systemd loads variables from an
+operator-managed `/etc/bondb/bondb.env` referenced by
+[`deploy/bondb.service`](../deploy/bondb.service). The file should be
+root-owned with mode `0600`.
 
-## Demo mode
+## Limitations
 
-Bundled synthetic values are available only for local UI testing:
-
-<http://localhost:4173/?demo=true>
-
-Demo mode is labeled **Demo** and must not be treated as live or official data.
-The bundled values are defined in [`src/data.js`](../src/data.js).
-
-## Source limitations and next steps
-
-- The FreeSIS XHR is an observed site implementation, not a documented public
-  API contract. The request registry should be re-verified if the FreeSIS UI or
-  service ID changes.
-- Only `증시자금추이` is currently verified and wired. Other FreeSIS,
-  KOFIA Bond, SEIBro, KRX, ECOS, and DART routes remain source candidates until
-  their request shape is captured and tested.
-- Raw FreeSIS response archival is not yet persistent. The current server
-  transforms each response for the live request and exposes retrieval metadata.
+- FreeSIS is an observed site implementation rather than a documented public
+  API contract; re-verify the XHR if its UI or service ID changes.
+- FSC monetary scale requires authenticated overlap validation before activation.
+- ECOS is not a complete daily fallback: its related table is lower frequency
+  and lacks the two forced-sale fields. It must not be mixed into a daily
+  six-field row.
+- Raw provider responses are transformed per request; persistent archival is not
+  currently implemented.
