@@ -1,608 +1,422 @@
-# Investment Operations Intelligence Workbench
+# Bond Operations External Intelligence Dashboard
 
-> **Design Document · v0.9 Concept Design**
+> **Design Document · v1.0 Scope Reset**
 
-투자자산 결산 · Settlement · 채권대여 분석 및 운영 지원 플랫폼
+투자자산 결산 · Settlement · 채권대여 업무를 위한 외부 시장정보 대시보드
 
-| **문서 버전**   | v0.9 Concept Design                                      |
-|-----------------|----------------------------------------------------------|
-| **작성 기준일** | 2026-08-11                                               |
-| **문서 목적**   | 요구사항 정의 및 UX/시스템 설계 초안                     |
-| **대상 독자**   | 투자자산관리 · IT/데이터 · 회계/리스크 · 프로젝트 담당자 |
+| 항목 | 내용 |
+|---|---|
+| 문서 버전 | v1.0 Scope Reset |
+| 작성 기준일 | 2026-08-12 |
+| 문서 목적 | 외부 공개·계약 데이터만 사용하는 정보 대시보드의 범위와 구현 기준 정의 |
+| 대상 독자 | 투자자산관리 담당자, 서비스 기획자, 개발·데이터 담당자 |
 
-※ 본 문서는 특정 회사의 실제 내부 시스템 구조를 전제로 하지 않은 업무 컨셉 설계안입니다.
-
-> **Codex 구현 기준:** 이 문서는 To-Be 요구사항 문서다. `Must` 요구사항을 우선 구현하고, `Should`/`Could`는 구현 범위를 명시적으로 선택한다. 문서에 없는 기능을 임의로 추가하거나, `Must` 기능을 단순 placeholder로 대체하지 않는다.
+> **최상위 정책 제약:** 사내 시스템 연동과 사내 데이터 반입은 허용하지 않는다.
+> 애플리케이션은 OMS/PMS, 회계, 수탁, 결제, 보유종목, 거래, 전표, 상대방,
+> 내부 대차계약 및 기타 비공개 업무 데이터에 접근하거나 이를 입력·업로드·저장하지
+> 않는다.
 
 # 1. Executive Summary
 
-본 시스템은 투자자산관리 담당자가 결산, 거래 결제(Settlement), 대사(Reconciliation), 채권대여 업무에서 필요한 수치와 예외사항을 한 곳에서 조회하고, 수치를 직접 비교·분해·교차필터링·시뮬레이션하여 원인을 빠르게 찾을 수 있도록 지원하는 분석형 운영 플랫폼이다.
+본 시스템은 투자자산 결산, Settlement, 채권대여 업무 담당자가 매일 확인하는
+금리, 환율, 채권시장, 결제 캘린더, 발행사 이벤트, 대차시장 동향 등의 외부 수치를
+한 화면에서 조회·비교·탐색할 수 있게 하는 정보 대시보드다.
 
-| **핵심 설계 원칙** “Dashboard of numbers”가 아니라 “Workbench for decisions”로 설계한다. 사용자는 결과 수치에서 출발해 원인 → 종목/거래 → 원천 시스템까지 연속적으로 drill-through할 수 있어야 한다. |
-|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+본 시스템은 내부 업무를 처리하는 운영시스템이 아니다. 특정 포트폴리오의 손익,
+결제상태, 대사 결과 또는 대여 가능 잔고를 계산하지 않으며, 공식 회계수치나
+투자판단을 대체하지 않는다. 모든 값은 출처, 기준일, 갱신시각, 단위 및 이용조건과
+함께 참고정보로 제공한다.
 
 ## 1.1 Problem Statement
 
-- 결산·세틀·채권대여 정보가 여러 시스템, 엑셀, 외부 데이터 소스에 흩어져 있어 동일 숫자를 재확인하는 시간이 크다.
-
-- 현재값만 보여주는 대시보드는 “왜 변했는지”를 설명하지 못해 원인 분석을 다시 수작업으로 수행하게 된다.
-
-- 장부·운용·수탁 데이터 간 차이를 발견하더라도 거래 단위 원천까지 이동하는 흐름이 단절되어 있다.
-
-- 채권대여는 보유잔고, 대여가능잔고, 수수료율, 담보, 만기 및 시장 수준을 동시에 봐야 하나 비교·시뮬레이션 도구가 부족하다.
-
-- 월말/분기말에는 대량의 예외와 마감 작업이 집중되므로 중요도 기반 큐와 감사 추적성이 필요하다.
+- 결산·세틀·채권대여 업무에 참고하는 외부 수치가 여러 기관과 사이트에 흩어져 있다.
+- 동일 지표도 기준일, 단위, 발표시각 및 개정 여부가 달라 비교 과정에서 오류가
+  발생하기 쉽다.
+- 휴장일, 이자·상환 일정, 공시 및 신용 이벤트를 개별 사이트에서 반복 확인해야 한다.
+- 대차잔고, 공매도, 채권 거래량과 금리 변화를 함께 비교하기 어렵다.
+- 공개 데이터 API 장애나 지연 시 값의 출처와 최신성을 판단하기 어렵다.
 
 ## 1.2 목표
 
-| **ID** | **목표**            | **성공 기준**                                                            |
-|--------|---------------------|--------------------------------------------------------------------------|
-| G-01   | 업무 탐색 시간 단축 | 핵심 KPI에서 원천 거래까지 3~4단계 내 도달                               |
-| G-02   | 예외 조기 탐지      | 결제·대사·담보 부족 등을 임계치 기반으로 자동 식별                       |
-| G-03   | 수치 설명 가능성    | 모든 주요 KPI에 정의·계산식·데이터 출처·갱신시각 제공                    |
-| G-04   | 분석 자율성         | 차원 변경, Compare, Heatmap/Scatter, Pivot, What-if를 사용자가 직접 수행 |
-| G-05   | 통제·감사 강화      | 사용자 액션, 수치 변경, 예외 상태 변경을 추적 가능하게 기록              |
+| ID | 목표 | 성공 기준 |
+|---|---|---|
+| G-01 | 정보 탐색 시간 단축 | 핵심 외부지표와 일정에 2 interaction 이내 접근 |
+| G-02 | 출처 투명성 | 모든 표시 값에 source, as-of, retrieved-at, unit 제공 |
+| G-03 | 변화 파악 | 전일·전주·전월말 대비 절대차와 증감률 제공 |
+| G-04 | 이벤트 조기 인지 | 휴장, 상환, 이자, 공시, 등급변동을 날짜순으로 확인 |
+| G-05 | 안전한 사용 | 내부 데이터 무수집 및 외부 데이터 라이선스 준수 |
 
 ## 1.3 In Scope / Out of Scope
 
-| **구분**     | **포함**                                                                                                                                              | **비고**                                          |
-|--------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------|
-| In Scope     | Morning Cockpit, Portfolio Explorer, Settlement/Reconciliation, Securities Lending, Scenario Lab, Explain/Lineage, Alert/Exception, Saved View/Export | 분석 및 운영 의사결정 지원                        |
-| Out of Scope | 주문 체결(OMS 대체), 회계전표 원장 시스템 대체, 실제 외부 대차계약 체결, 시장가격 산출기관 기능                                                       | 외부/기존 시스템과 연계하되 원장 역할은 하지 않음 |
+| 구분 | 범위 |
+|---|---|
+| In Scope | 외부 금리·환율, 채권시장 통계, 시장자금, 결제 캘린더, 공개 Corporate Action, 발행사 공시·신용 이벤트, 대차·공매도 시장 통계, 검색, 비교, 출처 설명, Export |
+| Out of Scope | 모든 사내 시스템 연동, 내부 파일·CSV 업로드, 보유종목·포트폴리오·거래·전표·결제상태·상대방·담보·대차계약 데이터, 내부 대사, 예외 workflow, 주문·회계·결제 처리, 투자 추천 |
+
+## 1.4 데이터 사용 원칙
+
+1. 공개 데이터 또는 정식 계약한 외부 데이터만 사용한다.
+2. 출처와 이용조건을 확인하지 못한 데이터는 운영 화면에 노출하지 않는다.
+3. 값을 추정하거나 임의 생성하지 않는다.
+4. fallback은 동일 통계 원천 또는 의미가 동등하다고 검증된 transport에만 적용한다.
+5. stale 값을 최신값처럼 표시하지 않는다.
+6. 평가가격, 대차 fee 등 라이선스 데이터는 계약 범위 안에서만 표시·저장·Export한다.
+7. 사용자가 사내 정보나 보유종목 목록을 입력할 수 있는 기능을 제공하지 않는다.
 
 # 2. 사용자 및 UX 설계 원칙
 
-| **Persona**         | **주요 업무**                                  | **핵심 니즈**                             |
-|---------------------|------------------------------------------------|-------------------------------------------|
-| 투자자산관리 담당자 | 일일 결제, 미결제, 결산, 대사, 채권대여 운영   | 예외 우선순위, 신속한 원인추적, 근거 확인 |
-| 팀장 / 관리자       | 마감 상태, 리스크·예외 현황, 운영 KPI 모니터링 | 전체 상태 요약, 심각도, 책임자, 처리기한  |
-| 운용역              | 포트폴리오 손익·노출·현금흐름 확인             | 성과/변동 원인, 종목 기여도, 시나리오     |
-| 회계 / 리스크       | 장부 정합성, 평가·손익·리스크 검증             | 계산식, 기준일, 데이터 출처, 대사 차이    |
-| 시스템 관리자       | 권한, 데이터 품질, 운영 설정                   | RBAC, 규칙/임계치, 감사로그, 데이터 상태  |
+| Persona | 주요 업무 | 핵심 니즈 |
+|---|---|---|
+| 투자자산 결산 담당자 | 기준금리·수익률·환율·시장가격 확인 | 기준일, 변화폭, 공식 출처 |
+| Settlement 담당자 | 영업일·휴장일·상환·이자 일정 확인 | 날짜별 일정, 시장·통화 구분 |
+| 채권대여 담당자 | 대차잔고·거래량·공매도·fee 동향 확인 | 시장 수준, 종목별 비교, 최신성 |
+| 관리자 | 시장 변화와 주요 이벤트 요약 확인 | 중요 변화, 데이터 상태, Export |
 
 ## 2.1 UX 원칙
 
-| **ID** | **원칙**               | **설명**                                                                                           |
-|--------|------------------------|----------------------------------------------------------------------------------------------------|
-| UX-01  | Cross-filter           | 차트·셀·KPI를 클릭하면 같은 컨텍스트의 다른 시각화와 상세 테이블이 동시에 필터링된다.              |
-| UX-02  | Compare-first          | 현재 vs 전일/전월말/전년말/Benchmark/장부-vs-수탁/예상-vs-실제를 모든 핵심 화면에서 즉시 전환한다. |
-| UX-03  | Progressive Drill-down | 전체 → 자산군 → 등급/만기 → 발행사 → 종목 → 거래/전표 순으로 단계적 상세화를 제공한다.             |
-| UX-04  | Explain this number    | 모든 주요 수치에서 정의, 산식, 원천, 갱신시각, 시스템별 값, 차이를 한 번에 확인한다.               |
-| UX-05  | Exception-first        | 업무 화면은 정상 건보다 처리 필요한 예외·마감 임박·금액 영향이 큰 건을 우선 노출한다.              |
-| UX-06  | Reversible exploration | 필터/분해/시나리오 변경은 언제든 초기화/Undo 가능하며 원장 데이터에는 영향을 주지 않는다.          |
-| UX-07  | Dense but scannable    | 기관 업무 특성상 정보밀도는 높이되 상태, 단위, 기준일, 중요도 표현은 일관되게 유지한다.            |
+| ID | 원칙 | 설명 |
+|---|---|---|
+| UX-01 | Source-first | 수치와 함께 출처·기준일·단위·갱신시각을 표시한다. |
+| UX-02 | Compare-first | 현재값과 전일·전주·전월말 값을 함께 제공한다. |
+| UX-03 | External-only | 포트폴리오·보유·거래 등 내부 컨텍스트를 요구하지 않는다. |
+| UX-04 | Progressive detail | 시장 요약에서 지표 시계열, 종목, 공시 원문으로 이동한다. |
+| UX-05 | Freshness visible | Fresh, Delayed, Stale, Failed 상태를 색상과 텍스트로 표시한다. |
+| UX-06 | No false precision | 원천 단위와 공표 정밀도를 유지하고 과도한 환산을 피한다. |
+| UX-07 | Accessible | 키보드 탐색, 명확한 focus, 색상 외 상태표현을 제공한다. |
 
 # 3. 시스템 개요 및 논리 아키텍처
 
-시스템은 내부 원장/운용/수탁 데이터와 외부 시장 데이터를 수집하여 운영 데이터마트에 시계열 Snapshot으로 저장하고, Semantic Layer에서 공통 Metric을 계산한다. Reconciliation Engine은 시스템 간 차이를 규칙 기반으로 탐지하며, Lineage Service는 수치의 계산 및 원천을 설명한다.
-
-```mermaid
-flowchart TB
-    SEC["SSO / RBAC / Audit"]
-    UI["Web UI / Workbench<br/>Cockpit · Explorer · Settlement · Lending · Scenario"]
-    API["API / BFF Layer<br/>검색 · 필터 · 권한 · Export"]
-    SEM["Semantic & Analytics Layer<br/>Metric 정의 · Cross-filter · Attribution · Scenario"]
-    REC["Reconciliation / Exception Engine<br/>대사 규칙 · Threshold · Alert"]
-    LIN["Metadata / Lineage Service<br/>수치 정의 · Source · 계산식 · Audit"]
-    MART["Operations Data Mart / Time-series Store<br/>Position · Transaction · Cashflow · Lending · Market"]
-    ING["Ingestion / Data Quality<br/>Batch + Intraday · Validation · Snapshot"]
-    INT["내부 시스템<br/>OMS/PMS · 회계 · 수탁/결제 · Security Master"]
-    EXT["외부 데이터<br/>시장금리/환율 · 평가가격 · KSD/대차 데이터"]
-
-    SEC <--> UI
-    SEC -.-> API
-    UI --> API
-    API --> SEM
-    API --> REC
-    API --> LIN
-    INT --> ING
-    EXT --> ING
-    ING --> MART
-    MART --> SEM
-    MART --> REC
-    MART --> LIN
-```
-
-**Figure 1. Logical Architecture**
-
-## 3.1 주요 데이터 도메인
-
-| **도메인**  | **대표 데이터**                                                                     |
-|-------------|-------------------------------------------------------------------------------------|
-| Position    | 기준일, 포트폴리오, 종목, 액면, 장부가, 평가액, 미수이자, 듀레이션, YTM, 등급, 만기 |
-| Transaction | 거래일/결제일, 매수매도, 가격, 경과이자, 결제금액, 상대방, 상태                     |
-| Accounting  | 계정, 장부금액, 이자수익, 상각, 평가손익, 처분손익, FX손익, 전표 ID                 |
-| Settlement  | 예상/실제 결제금액, 결제상태, fail reason, cash/security movement                   |
-| Lending     | 대여잔고, 가용잔고, fee, 담보가치, haircut, 상환예정, 상대방 exposure               |
-| Market      | 금리곡선, 환율, 평가가격, credit spread, 대차 fee benchmark                         |
-| Metadata    | Metric 정의, 단위, 산식, source table/field, 갱신주기, 데이터 owner                 |
-
-# 4. 기능적 요구사항 (Functional Requirements)
-
-우선순위는 Must / Should / Could로 구분한다. Must는 MVP 운영에 필수, Should는 1차 고도화, Could는 분석 편의 확장 기능이다.
-
-| **ID** | **영역**           | **요구사항**                                                                      | **우선순위** |
-|--------|--------------------|-----------------------------------------------------------------------------------|--------------|
-| FR-001 | Morning Cockpit    | 기준일 기준 핵심 KPI(장부가, 손익, 금일 결제, 미결제, 대여잔고, 예외)를 요약 표시 | Must         |
-| FR-002 | Morning Cockpit    | 전일/전월말/전년말 대비 증감 및 중요 변화 Driver 표시                             | Must         |
-| FR-003 | Morning Cockpit    | 예외를 심각도·금액영향·마감기한 기준으로 정렬한 Action Queue 제공                 | Must         |
-| FR-004 | Portfolio Explorer | Metric, X/Y축, Color, Size, Group By 차원을 사용자가 변경 가능                    | Must         |
-| FR-005 | Portfolio Explorer | 등급×잔존만기 Heatmap에서 셀 선택 시 다른 뷰와 거래 테이블 Cross-filter           | Must         |
-| FR-006 | Portfolio Explorer | 현재 vs 비교기준을 선택하고 절대차·증감률을 병렬 표시                             | Must         |
-| FR-007 | Portfolio Explorer | 손익/장부가 변동을 Waterfall 및 contribution 형태로 분해                          | Should       |
-| FR-008 | Portfolio Explorer | Top/Bottom contributor와 종목별 기여도 제공                                       | Should       |
-| FR-009 | Settlement         | 당일/향후 결제 예정 건을 현금·증권·통화·상대방 기준 조회                          | Must         |
-| FR-010 | Settlement         | OMS/PMS, 회계, 수탁/결제 간 거래·금액·상태 대사 수행                              | Must         |
-| FR-011 | Settlement         | 미결제, 금액 불일치, 결제일 불일치, 종목/수량 불일치 자동 탐지                    | Must         |
-| FR-012 | Settlement         | 예외 건의 원인 유형, 담당자, 상태, 메모, 처리기한 관리                            | Must         |
-| FR-013 | Settlement         | 예상 vs 실제 결제금액 차이를 거래 단위로 drill-through                            | Must         |
-| FR-014 | Closing            | 전월말 장부가 → 매수/매도/상환/상각/FX/평가 → 당월말 장부가 Bridge 제공           | Must         |
-| FR-015 | Closing            | 미수이자, 이자수익, 평가손익, 처분손익 등 주요 계정 대사                          | Must         |
-| FR-016 | Closing            | 월말 체크리스트 및 완료/미완료 상태 관리                                          | Should       |
-| FR-017 | Lending            | 보유·대여중·대여가능 잔고와 평균/종목별 fee 조회                                  | Must         |
-| FR-018 | Lending            | 대여 fee × 가용잔고 × 보유액 등 Scatter/Heatmap 기반 기회 탐색                    | Should       |
-| FR-019 | Lending            | 담보가치, 담보비율, haircut, 부족액 및 상대방별 exposure 조회                     | Must         |
-| FR-020 | Lending            | 상환예정/Recall/Corporate Action 영향 표시                                        | Should       |
-| FR-021 | Scenario Lab       | 금리, spread, FX, 대여 fee, 대여율, haircut 등 가정값 입력                        | Should       |
-| FR-022 | Scenario Lab       | Current vs Scenario의 평가손익/수익/담보 영향을 즉시 계산                         | Should       |
-| FR-023 | Explain            | KPI/셀/거래에 대해 정의·산식·원천·갱신시각·단위 표시                              | Must         |
-| FR-024 | Explain            | 시스템별 값(운용/회계/수탁)과 차이를 한 화면에 표시                               | Must         |
-| FR-025 | Search             | 종목명/ISIN/거래ID/전표ID/상대방 통합검색                                         | Must         |
-| FR-026 | Saved View         | 사용자 필터·정렬·차트 구성을 저장하고 재호출                                      | Should       |
-| FR-027 | Export             | 현재 분석 컨텍스트를 Excel, CSV, PDF, 이미지의 네 형식으로 내보내기               | Should       |
-| FR-028 | Alert              | 금액/건수/임계치/마감시간 기반 알림 규칙 설정                                     | Should       |
-| FR-029 | Admin              | Metric 정의, 대사 규칙, threshold, 데이터 source 설정 관리                        | Must         |
-| FR-030 | Audit              | 예외 상태 변경, Export, 설정 변경, 수동 보정 내역 기록                            | Must         |
-| FR-031 | Data Quality       | 데이터 적재 지연, 누락, 중복, 기준일 불일치를 상태 배너로 표시                    | Must         |
-| FR-032 | Collaboration      | 예외 또는 분석 화면의 링크를 동일 컨텍스트로 공유                                 | Could        |
-
-## 4.1 핵심 Metric 정의 예시
-
-| **Metric**               | **정의**                                                                                 | **단위** | **갱신**    |
-|--------------------------|------------------------------------------------------------------------------------------|----------|-------------|
-| 장부가                   | 회계 분류/평가 기준에 따른 기준일 장부금액                                               | KRW/통화 | 일/월말     |
-| 평가손익                 | 기준일 평가액 - 비교 기준 장부/평가액(정의별 분리)                                       | KRW      | 일          |
-| Expected Settlement      | 결제일 기준 예정 현금흐름 총액                                                           | KRW/통화 | Intraday    |
-| Settlement Fail          | 결제 예정시각 이후 미완료 상태인 거래 건수/금액                                          | 건/KRW   | Intraday    |
-| Lending Utilization      | 대여잔고 ÷ (대여잔고 + 대여가능잔고). 분모 0이면 `NULL`/N/A                              | %        | 일/Intraday |
-| Expected Lending Revenue | 대여 기준금액 × 연율 fee × 적용일수 ÷ Day-count denominator                              | KRW/통화 | 일          |
-| Collateral Coverage      | 동일 기준통화의 post-haircut 담보가치 ÷ 요구담보액. 요구담보액 0이면 `NULL`/N/A           | %        | Intraday    |
-
-계산 재현성을 위해 다음 규칙을 Metric 버전에 포함한다.
-
-- 대여잔고와 대여가능잔고는 동일 계약 범위와 As-of의 수량이며 합계가 총 lendable inventory다.
-- Lending fee 입력 단위는 bps 또는 %를 명시하고 계산 전 연율 소수로 정규화한다(예: 25 bps = 0.0025).
-- Expected Lending Revenue는 계약별 Day-count(예: ACT/365, ACT/360), 적용 시작/종료일,
-  기준금액 종류와 반올림 규칙을 저장한다.
-- 통화 환산이 필요한 금액은 동일 As-of의 승인된 FX Snapshot을 사용하고 환율 ID를 결과에 기록한다.
-- Post-haircut 담보가치는 자산별 평가액에 `(1 - haircut)`을 적용한 값이다. 분모 0은 0%로
-  간주하지 않으며 데이터 품질/해당 없음 상태와 구분한다.
-
-# 5. 비기능적 요구사항 (Non-Functional Requirements)
-
-| **ID**  | **분류**      | **요구사항**                                                        | **비고/검증**             |
-|---------|---------------|---------------------------------------------------------------------|---------------------------|
-| NFR-001 | 성능          | Cockpit 최초 로드 P95 ≤ 3초, 일반 Drill-down P95 ≤ 2초              | 사내망 기준 / 캐시 활용   |
-| NFR-002 | 대용량        | 수천만 건 거래/포지션 이력에서 일·월말 Snapshot 조회 지원           | 사전집계 + columnar store |
-| NFR-003 | 가용성        | 업무시간 월 가용성 99.9% 이상 목표                                  | planned maintenance 제외  |
-| NFR-004 | 데이터 신선도 | Intraday source는 목표 SLA 내 지연 상태를 화면에 명시               | source별 SLA 정의         |
-| NFR-005 | 정합성        | 주요 KPI는 동일 기준일/필터에서 재현 가능하고 원천합계와 대사 가능  | reproducibility           |
-| NFR-006 | 보안          | SSO, 최소권한 RBAC, 데이터영역/포트폴리오별 접근통제                | read/write 분리           |
-| NFR-007 | 감사          | 조회 제외 주요 상태변경/설정변경/Export에 사용자·시각·전후값 기록   | tamper-evident 권장       |
-| NFR-008 | 개인정보/기밀 | 민감 거래/상대방 데이터는 권한에 따라 마스킹/제한                   | 로그에도 최소화           |
-| NFR-009 | 설명가능성    | 각 출시 Phase의 해당 범위로 승인된 주요 Metric 100%에 정의·계산식·source·as-of 제공 | Lineage coverage KPI |
-| NFR-010 | 사용성        | 핵심 예외 원인까지 평균 4 interaction 이내 도달 목표                | UX telemetry로 측정       |
-| NFR-011 | 접근성        | 키보드 탐색, 명확한 focus, 색상 외 상태표현, 최소 대비 준수         | WCAG 2.1 AA 지향          |
-| NFR-012 | 브라우저      | 사내 표준 Chromium 기반 최신 2개 버전 지원                          | 해상도 1440px 우선        |
-| NFR-013 | 관측성        | API latency, query error, data lag, reconciliation failure 모니터링 | 운영 Dashboard/Alert      |
-| NFR-014 | 복구          | 주요 메타데이터/사용자 설정 RPO ≤ 1시간, RTO ≤ 4시간 목표           | 정책 확정 필요            |
-| NFR-015 | 확장성        | 새 자산군/Metric/대사 규칙을 코드 변경 최소화로 추가                | metadata-driven           |
-| NFR-016 | 추적성        | 각 요구사항을 테스트케이스 및 사용자 승인(UAT) 기준과 연결          | traceability matrix       |
-
-## 5.1 보안 및 권한 모델
-
-- Viewer: 조회 및 개인 Saved View 사용. 상태 변경 불가.
-
-- Operator: 예외 상태, 담당자, 메모를 변경할 수 있으나 원천 원장 데이터는 수정하지 않음.
-
-- Manager: 팀 범위 예외 배정, 임계치 승인, 운영 리포트 조회.
-
-- Admin: Metric/규칙/Source/권한 설정 관리. 설정 변경은 별도 감사로그 기록.
-
-- 권한은 역할(Role) + 데이터 범위(Portfolio/Asset/Org)의 조합으로 평가한다.
-
-# 6. Use Case
+애플리케이션 서버는 등록된 외부 Source adapter를 통해 데이터를 수집하고,
+source별 원본 메타데이터를 보존한 뒤 canonical metric과 event로 정규화한다.
+브라우저는 서버 API만 호출하며 외부 API key를 전달받지 않는다.
 
 ```mermaid
 flowchart LR
-    OPS["투자자산관리 담당자"]
-    ACC["회계 / 리스크"]
-    MGR["팀장 / 관리자"]
-    PM["운용역"]
+    UI["Web UI<br/>Dashboard · Explorer · Calendar · Lending Market"]
+    API["Public-data BFF<br/>Query · Search · Export"]
+    NORM["Normalization Layer<br/>Unit · Date · Metric mapping"]
+    CACHE["Time-series Cache<br/>Observation · Event · Source status"]
+    META["Source Registry<br/>License · SLA · Provenance"]
+    PUB["공개 데이터<br/>ECOS · FreeSIS · data.go.kr · OpenDART"]
+    EXT["기타 외부 데이터<br/>KRX · KSD · 계약 데이터 공급자"]
 
-    subgraph SYS["Investment Operations Intelligence Workbench"]
-        UC1(["Morning Cockpit 조회"])
-        UC2(["포트폴리오 탐색 · Drill-down"])
-        UC3(["결제 · 대사 예외 분석"])
-        UC4(["채권대여 기회 분석"])
-        UC5(["What-if 시나리오"])
-        UC6(["Explain this number · 원천 추적"])
-        UC7(["알림 · 예외 처리"])
-        UC8(["저장 뷰 · 리포트 Export"])
-    end
-
-    OPS --> UC1
-    OPS --> UC2
-    OPS --> UC3
-    OPS --> UC4
-    OPS --> UC5
-    OPS --> UC6
-    OPS --> UC7
-    OPS --> UC8
-
-    ACC --> UC2
-    ACC --> UC3
-    ACC --> UC6
-    ACC --> UC8
-
-    MGR --> UC1
-    MGR --> UC2
-    MGR --> UC6
-    MGR --> UC7
-    MGR --> UC8
-
-    PM --> UC2
-    PM --> UC5
-    PM --> UC6
-
-    UC3 -. include .-> UC6
-    UC1 -. include .-> UC7
-    UC4 -. extend .-> UC5
-    UC2 -. extend .-> UC5
+    UI --> API
+    API --> NORM
+    API --> META
+    NORM --> CACHE
+    CACHE --> PUB
+    CACHE --> EXT
+    META --> PUB
+    META --> EXT
 ```
 
-**Figure 2. Use Case Diagram**
+**금지 경로:** 내부망, 사내 API, 내부 DB, 사용자 파일 업로드 및 내부 데이터
+복사 경로는 아키텍처에 포함하지 않는다.
 
-## 6.1 주요 Use Case 명세
+## 3.1 데이터 도메인
 
-| **ID** | **이름**              | **Actor**           | **사전조건**                        | **기본 흐름**                                              | **결과**                        |
-|--------|-----------------------|---------------------|-------------------------------------|------------------------------------------------------------|---------------------------------|
-| UC-01  | 아침 업무 현황 파악   | 투자자산관리 담당자 | 기준일 데이터 적재 완료             | KPI·예외·마감일정을 조회하고 우선 처리 건을 선택           | 오늘 처리할 Action Queue 확보   |
-| UC-02  | 평가손익 원인 분석    | 담당자/운용역       | 포지션/시장데이터 사용 가능         | 손익 클릭→등급/만기→발행사→종목→원천값 drill-down          | Top contributor 및 원인 확인    |
-| UC-03  | Settlement 예외 처리  | 담당자              | 대사 엔진 수행 완료                 | 불일치 선택→OMS/회계/수탁 값 비교→원인 분류→상태/메모 갱신 | 해결/대기 상태 및 Audit ID 생성 |
-| UC-04  | 월말 장부 Bridge 확인 | 담당자/회계         | 월말 Snapshot 존재                  | 전월말→거래/상환/상각/FX/평가 요소 분해                    | 마감 차이 요인 확인             |
-| UC-05  | 채권대여 기회 탐색    | 담당자              | Inventory 및 fee data 존재          | 가용잔고와 fee를 Scatter/Heatmap으로 탐색→후보 종목 선택   | 대여 후보 및 예상수익 확인      |
-| UC-06  | 시나리오 분석         | 담당자/운용역       | 민감도 또는 pricing model 사용 가능 | 금리/spread/FX/fee 가정 변경→Current vs Scenario 비교      | 영향도 정량화                   |
-| UC-07  | 수치 근거 확인        | 모든 사용자         | Metric metadata 존재                | Why? 클릭→정의/산식/source/시스템별 값 확인                | 수치 신뢰성 확인                |
-| UC-08  | 운영 리포트 공유      | 담당자/관리자       | 권한 및 export 정책 충족            | Saved View 저장→동일 컨텍스트 링크/파일 공유               | 재현 가능한 보고                |
+| 도메인 | 대표 데이터 |
+|---|---|
+| Rates | 기준금리, 국고채·통안채·회사채 수익률, 수익률곡선, 신용 스프레드 |
+| FX | 주요 원화 환율, 고시시각, 기준환율 종류 |
+| Market Funds | 투자자예탁금, RP 잔고, 미수금, 반대매매 |
+| Bond Market | 발행·상환·잔액, 장내외 거래량, 평균수익률 |
+| Calendar | 시장 휴장일, 통화별 결제 영업일, 공휴일 |
+| Security Events | 이자지급, 만기상환, 조기상환, 권리행사, 공시 |
+| Lending Market | 대차 체결·상환·잔고, 공매도 거래·잔고, 공개 fee benchmark |
+| Issuer/Credit | 발행사 공시, 신용등급 및 등급전망 변경 |
+| Metadata | source, as-of, effective time, retrieved-at, unit, license, freshness |
 
-# 7. Sequence Diagrams
+## 3.2 Source 후보와 도입 정책
 
-다음 시퀀스는 대표적인 조회/분석/예외처리 흐름을 논리적으로 표현한 것이다. 실제 연계 방식은 API, DB View, 메시지/파일 인터페이스 등 사내 표준에 맞게 결정한다.
+| Source | 주요 용도 | 인증/계약 | 도입 상태 |
+|---|---|---|---|
+| 금융투자협회 FreeSIS | 시장자금 및 채권시장 통계 | 현재 확인된 조회는 key 없음 | 사용 중 |
+| 금융위원회 공공데이터포털 | KOFIA 통계의 공식 transport fallback | 일반 인증키 | 일부 사용 중 |
+| 한국은행 ECOS | 기준금리, 금리, 환율, 거시지표 | API 인증키 | 도입 후보 |
+| OpenDART | 발행사 공시와 주요 이벤트 | API 인증키 | 도입 후보 |
+| KRX Open API/Data Marketplace | 시장 일정, 채권·공매도 통계 | 인증 및 데이터별 이용조건 | 검증 필요 |
+| KSD SEIBro/데이터 서비스 | 종목정보, 상환·이자·대차 관련 공개정보 | 공개 범위 또는 별도 계약 | 검증 필요 |
+| KIS/NICE P&I/FnPricing 등 | 평가가격, 수익률, 스프레드, fee | 유료 계약 | 선택 범위 |
 
-## 7.1 Morning Cockpit → Drill-down → Explain
+Source 등록 전 데이터 항목, 단위, 발표주기, 개정정책, 이용조건, 재배포 가능
+범위를 확인한다. 사이트 화면의 비공개·비문서 API를 사용할 경우 이용조건과
+변경 위험을 별도로 승인받는다.
 
-단일 KPI 조회에서 시작하여 차원별 기여도 분석과 숫자 lineage 확인까지 이어지는 핵심 분석 흐름.
+# 4. 기능적 요구사항
+
+우선순위는 Must / Should / Could로 구분한다.
+
+| ID | 영역 | 요구사항 | 우선순위 |
+|---|---|---|---|
+| FR-001 | Dashboard | 기준금리, 주요 채권금리, 환율, 시장자금, 채권거래 핵심지표 표시 | Must |
+| FR-002 | Dashboard | 전일·전주·전월말 대비 절대차와 증감률 표시 | Must |
+| FR-003 | Dashboard | 중요 금리·환율 변화와 예정 이벤트 요약 표시 | Must |
+| FR-004 | Rates Explorer | 기간, 지표, 만기, 등급을 선택해 시계열과 수익률곡선 비교 | Must |
+| FR-005 | Rates Explorer | 국고채 대비 회사채 스프레드와 기간별 변화 표시 | Should |
+| FR-006 | Bond Market | 발행·상환·잔액·거래량을 기간 및 채권유형별 조회 | Must |
+| FR-007 | Settlement Calendar | 국내외 시장·통화별 휴장일과 결제 영업일 표시 | Must |
+| FR-008 | Security Events | 공개된 이자·상환·조기상환·Corporate Action 일정 조회 | Must |
+| FR-009 | Disclosures | 발행사 공시와 신용등급·등급전망 변경 조회 | Should |
+| FR-010 | Lending Market | 공개 대차 체결·상환·잔고 추이 표시 | Must |
+| FR-011 | Lending Market | 공매도 거래량·잔고와 대차지표를 함께 비교 | Should |
+| FR-012 | Lending Market | 계약된 경우 종목별 외부 fee benchmark 표시 | Could |
+| FR-013 | Search | 종목명, ISIN, 발행사 및 외부 공시 통합검색 | Must |
+| FR-014 | Explain | 지표의 정의, 단위, source, as-of, retrieved-at 표시 | Must |
+| FR-015 | Explain | 원천 페이지 또는 공식 문서 링크 제공 | Must |
+| FR-016 | Data Status | Source별 Fresh/Delayed/Stale/Failed 상태 표시 | Must |
+| FR-017 | Export | 현재 표와 차트를 CSV 또는 이미지로 내보내기 | Should |
+| FR-018 | Alert | 외부 이벤트·지표 임계치의 브라우저 알림 | Could |
+| FR-019 | Source Admin | 비밀값 노출 없이 Source 상태·라이선스·갱신주기 조회 | Should |
+| FR-020 | Privacy Guard | 내부 데이터 입력·업로드·연동 기능을 제공하지 않음 | Must |
+
+## 4.1 핵심 Metric 예시
+
+| Metric | 정의 | 단위 | 갱신 |
+|---|---|---|---|
+| Bank of Korea Base Rate | 한국은행이 공표한 기준금리 | % | 발표 시 |
+| Government Bond Yield | 지정 만기의 국고채 대표수익률 | % | 일 |
+| Credit Spread | 동일 기준의 회사채 수익률 - 국고채 수익률 | bp | 일 |
+| KRW Exchange Rate | Source가 정의한 원화 환율 | 통화쌍 | 일/Intraday |
+| Investor Deposits | 금융투자협회 공표 투자자예탁금 | KRW | 일 |
+| Bond Trading Volume | Source가 공표한 채권 거래량 | KRW/건 | 일 |
+| Lending Balance | 외부 Source가 공표한 대차잔고 | 수량/KRW | 일 |
+| Short-selling Balance | 외부 Source가 공표한 공매도 잔고 | 수량/KRW/% | 일 |
+| Upcoming Redemption | 공개 종목정보 기준 예정 상환 이벤트 | 건/KRW | 일 |
+
+서로 다른 Source의 이름이 유사하더라도 정의, 표본, 기준시각 또는 단위가 다르면
+같은 Metric으로 합치지 않는다.
+
+# 5. 비기능적 요구사항
+
+| ID | 분류 | 요구사항 | 검증 |
+|---|---|---|---|
+| NFR-001 | 성능 | Dashboard 최초 로드 P95 3초 이내 | 캐시 포함 부하 테스트 |
+| NFR-002 | 신선도 | source SLA를 기준으로 지연·stale 상태 계산 | 시간 경계 테스트 |
+| NFR-003 | 정합성 | 표시값이 원천 응답과 정의된 변환 후 일치 | fixture/contract test |
+| NFR-004 | 출처성 | 표시 Metric 100%에 source·as-of·unit 제공 | coverage test |
+| NFR-005 | 가용성 | 개별 Source 장애가 다른 화면을 성공으로 위장하지 않음 | 부분 실패 테스트 |
+| NFR-006 | 비밀관리 | API key는 서버 측 Secret으로만 관리 | 노출 검사 |
+| NFR-007 | 개인정보 | 사용자 및 내부 업무 데이터를 수집하지 않음 | 입력·로그 점검 |
+| NFR-008 | 라이선스 | 저장·표시·Export가 공급자 이용조건을 준수 | source별 승인 |
+| NFR-009 | 접근성 | 키보드, focus, 색상 외 상태표현, 대비 제공 | WCAG 2.1 AA 점검 |
+| NFR-010 | 브라우저 | Chromium 최신 2개 버전 지원 | 회귀 테스트 |
+| NFR-011 | 관측성 | source latency, error, data lag, cache age 수집 | 운영 대시보드 |
+| NFR-012 | 확장성 | Source adapter와 Metric mapping으로 공급자 추가 | adapter contract test |
+| NFR-013 | 보존 | 원천 이용조건에 맞는 캐시 TTL과 삭제정책 적용 | 정책 테스트 |
+| NFR-014 | 보안 | URL allowlist, timeout, response size/schema 검증 | 보안 테스트 |
+| NFR-015 | 추적성 | FR/NFR과 테스트·Source를 연결 | 추적성 매트릭스 |
+
+## 5.1 Key 및 Secret 정책
+
+- 필요한 후보는 `DATA_GO_KR_SERVICE_KEY`, ECOS API key, OpenDART API key,
+  KRX/KSD 또는 계약 공급자 credential이다.
+- 모든 key는 서버 환경변수 또는 Secret Manager에서 주입한다.
+- 브라우저 응답, URL, 로그, Export 및 오류 메시지에 key를 포함하지 않는다.
+- Source credential이 없으면 해당 기능을 명시적으로 비활성화하며 값을 대체 생성하지
+  않는다.
+- credential 권한은 읽기 전용과 필요한 데이터 범위로 제한한다.
+
+# 6. 주요 Use Case
+
+| ID | 이름 | 기본 흐름 | 결과 |
+|---|---|---|---|
+| UC-01 | 아침 시장현황 확인 | Dashboard에서 금리·환율·시장자금·일정 확인 | 주요 변화 파악 |
+| UC-02 | 결산 참고금리 확인 | 만기·등급 선택 → 시계열·곡선 비교 → 원천 확인 | 외부 기준값 확보 |
+| UC-03 | 결제 일정 확인 | 시장·통화·기간 선택 → 휴장·결제 영업일 확인 | 일정 리스크 인지 |
+| UC-04 | 상환·공시 확인 | 기간·발행사 검색 → 이벤트 → 원문 이동 | 공개 이벤트 확인 |
+| UC-05 | 대차시장 확인 | 대차잔고·체결·공매도 추이 비교 | 시장 수급 파악 |
+| UC-06 | 수치 근거 확인 | 지표 Explain → 정의·단위·source·as-of 확인 | 수치 신뢰성 판단 |
+| UC-07 | 참고자료 Export | 현재 필터와 출처 메타데이터를 포함해 Export | 재현 가능한 참고자료 |
+
+# 7. 대표 Sequence
+
+## 7.1 Dashboard 조회
 
 ```mermaid
 sequenceDiagram
     actor U as 사용자
     participant UI as Web UI
-    participant API as Analytics API
-    participant SEM as Semantic Layer
-    participant REC as Reconciliation Engine
-    participant DM as Data Mart
-    participant LIN as Lineage
+    participant API as Public-data BFF
+    participant C as Cache
+    participant S as External Sources
 
-    U->>UI: Morning Cockpit 조회
-    UI->>API: 기준일 · 포트폴리오 · Compare 조건
-    API->>SEM: KPI + Driver 요청
-    SEM->>DM: Metric/차원 기반 집계
-    DM-->>SEM: 집계 결과
-    SEM-->>API: KPI + Driver
-    API->>REC: Exception Summary 요청
-    REC->>DM: 대사 결과/상태 및 금액 영향 조회
-    DM-->>REC: Exception 데이터
-    REC-->>API: Severity·금액영향·마감기한별 Action Queue
-    API-->>UI: 화면 모델 반환
-    UI-->>U: KPI / Heatmap / Waterfall 표시
-
-    U->>UI: 평가손익 -120억 클릭
-    UI->>API: Drill-down 요청
-    API->>SEM: 신용등급 → 발행사 → 종목 분해
-    SEM->>DM: 세부 포지션 조회
-    DM-->>SEM: 세부 데이터
-    SEM-->>API: Top contributors
-    API-->>UI: 교차필터 결과
-
-    U->>UI: Why? 클릭
-    UI->>API: 수치 설명 요청
-    API->>LIN: 정의 · 계산식 · Source 조회
-    LIN-->>API: Lineage / 대사 상태
-    API-->>UI: Explain drawer
+    U->>UI: 기준일과 비교기간 선택
+    UI->>API: Dashboard 요청
+    API->>C: 정규화 관측값 조회
+    C-->>API: 값 + source metadata
+    alt Cache 갱신 필요
+        API->>S: Source별 데이터 요청
+        S-->>API: 공식 응답
+        API->>C: 검증된 관측값 저장
+    end
+    API-->>UI: Metric + freshness + provenance
+    UI-->>U: Dashboard 표시
 ```
 
-**Figure 3. Morning Cockpit → Drill-down → Explain**
-
-## 7.2 Settlement Exception 분석 및 처리
-
-OMS/PMS, 회계, 수탁/결제 결과를 비교하여 차이 원인을 확인하고 운영상 상태를 갱신하는 흐름.
+## 7.2 Source 장애와 fallback
 
 ```mermaid
 sequenceDiagram
-    actor O as 담당자
-    participant UI as Settlement UI
-    participant REC as Reconciliation Engine
-    participant OMS as OMS/PMS
-    participant ACC as 회계
-    participant CUS as 수탁/결제
-    participant AUD as Audit
+    participant API as Public-data BFF
+    participant P as Primary Source
+    participant F as Verified Fallback
 
-    O->>UI: 미결제/불일치 Exception 선택
-    UI->>REC: Exception 상세 요청
-    REC->>OMS: 거래조건 조회
-    OMS-->>REC: Trade terms
-    REC->>ACC: 전표/장부 조회
-    ACC-->>REC: Accounting amount
-    REC->>CUS: 결제/수탁 상태 조회
-    CUS-->>REC: Settlement status
-    REC-->>UI: 차이 원인 + 추천 확인 포인트
-
-    O->>UI: 원인 분류 및 처리 메모
-    UI->>REC: 상태 업데이트 요청
-    REC->>AUD: 사용자 · 시각 · 변경 전후 기록
-    AUD-->>REC: Audit ID
-    REC-->>UI: Resolved / Pending 반영
+    API->>P: 데이터 요청
+    P--xAPI: timeout/error
+    alt 의미가 동등한 fallback 등록
+        API->>F: fallback 요청
+        F-->>API: 공식 응답
+        API-->>API: source와 fallback reason 기록
+    else fallback 없음
+        API-->>API: Source 상태 Failed 처리
+    end
 ```
 
-**Figure 4. Settlement Exception 분석 및 처리**
+# 8. 화면 구성
 
-## 7.3 채권대여 기회 탐색 및 What-if
+| 화면 | 핵심 구성요소 | 답해야 하는 질문 |
+|---|---|---|
+| S-01 External Morning Dashboard | 금리·환율·시장자금 KPI, 변화, 이벤트 | 오늘 달라진 외부 수치는 무엇인가? |
+| S-02 Rates & Spread Explorer | 시계열, 수익률곡선, spread table | 금리와 spread가 어떻게 변했는가? |
+| S-03 Settlement Calendar | 휴장일, 결제 영업일, 통화·시장 필터 | 어느 날짜에 결제 일정 주의가 필요한가? |
+| S-04 Security Events | 이자·상환·조기상환·공시 목록 | 예정된 공개 이벤트는 무엇인가? |
+| S-05 Lending Market | 대차 체결·상환·잔고, 공매도 통계 | 대차시장 수급이 어떻게 변했는가? |
+| S-06 Source & Methodology | 정의, 단위, 갱신, 이용조건, 장애상태 | 이 수치를 어디까지 신뢰하고 이용할 수 있는가? |
 
-Inventory와 fee benchmark를 결합해 후보를 찾고 가정 변경에 따른 기대수익/담보 영향을 비교하는 흐름.
+## 8.1 공통 Context
 
-```mermaid
-sequenceDiagram
-    actor O as 담당자
-    participant UI as Lending UI
-    participant API as Analytics API
-    participant INV as 대여 Inventory
-    participant FEE as 시장 Fee
-    participant SCN as Scenario Engine
-    participant DM as Data Mart
+- As-of Date
+- Compare: Previous day / Previous week / Month-end
+- Market: Korea / 지원 해외시장
+- Currency
+- Source
 
-    O->>UI: 채권대여 Opportunity 조회
-    UI->>API: 필터/정렬 조건
-    API->>INV: 보유 · 대여 · 가용 잔고
-    INV-->>API: Inventory
-    API->>FEE: 시장/내부 Fee benchmark
-    FEE-->>API: Fee data
-    API->>DM: 등급 · 만기 · 발행사 · 보유액
-    DM-->>API: Position dimensions
-    API-->>UI: Scatter / Heatmap + 후보 종목
+Portfolio, account, owner, counterparty 및 내부 상태 필드는 제공하지 않는다.
 
-    O->>UI: Fee +5bp / 대여율 변경
-    UI->>API: What-if 실행
-    API->>SCN: 가정값 + 포지션 전달
-    SCN-->>API: 예상 대여수익 / 담보 영향
-    API-->>UI: Current vs Scenario 표시
+# 9. 데이터 처리 원칙
+
+## 9.1 시간과 Snapshot
+
+- Observation Date, Effective Time, Published Time, Retrieved-at을 구분한다.
+- 일별 데이터와 Intraday 데이터를 같은 최신성 규칙으로 비교하지 않는다.
+- 공휴일이나 미발표일은 이전값을 새 관측값으로 복제하지 않는다.
+- 원천 개정이 있는 통계는 revision 여부와 이전값 변경을 기록한다.
+- 모든 시간은 source timezone을 보존하고 UI에서 KST 변환 여부를 표시한다.
+
+## 9.2 단위와 계산
+
+- 원천 단위와 `monetaryScale`을 Source Registry에 등록한다.
+- 비율 `%`, 연율 소수, `bp`를 명시적으로 구분한다.
+- 환율은 통화쌍과 quote convention을 함께 보관한다.
+- 스프레드는 동일 기준일과 호환 가능한 만기의 검증된 조합에서만 계산한다.
+- 반올림은 표시 단계에서만 수행하고 계산에는 정규화 원값을 사용한다.
+
+## 9.3 Source 상태
+
+| 상태 | 정의 |
+|---|---|
+| Fresh | source SLA 내 최신 관측값 |
+| Delayed | 예상 발표시각을 지났지만 허용 지연 범위 안 |
+| Stale | 허용 지연 범위를 초과한 마지막 관측값 |
+| Partial | 요청한 지표 중 일부만 검증 완료 |
+| Failed | source 요청 또는 schema 검증 실패 |
+| Unlicensed | credential 또는 이용권한 없음 |
+
+# 10. API 초안
+
+| Endpoint | 목적 | 주요 파라미터 |
+|---|---|---|
+| `GET /api/dashboard` | 외부 핵심지표와 이벤트 요약 | asOf, compare, market |
+| `GET /api/rates` | 금리·수익률곡선·spread | series, tenor, rating, from, to |
+| `GET /api/bond-market` | 발행·상환·잔액·거래량 | type, from, to |
+| `GET /api/calendar` | 휴장·결제 영업일 | market, currency, from, to |
+| `GET /api/security-events` | 이자·상환·공시 이벤트 | query, eventType, from, to |
+| `GET /api/lending-market` | 대차·공매도 시장통계 | securityId, metric, from, to |
+| `GET /api/search` | 종목·ISIN·발행사·공시 검색 | q, type, cursor |
+| `GET /api/metrics/{id}/explain` | 지표 정의와 provenance | asOf, source |
+| `GET /api/sources/status` | source별 상태와 최신성 | sourceId |
+
+모든 응답은 가능한 경우 다음 메타데이터를 포함한다.
+
+```json
+{
+  "sourceId": "registered-source-id",
+  "asOf": "2026-08-11",
+  "publishedAt": "2026-08-12T08:00:00+09:00",
+  "retrievedAt": "2026-08-12T08:05:00+09:00",
+  "unit": "KRW million",
+  "status": "Fresh",
+  "referenceUrl": "https://official.example/data"
+}
 ```
 
-**Figure 5. 채권대여 기회 탐색 및 What-if**
+# 11. 오류 및 표시 정책
 
-# 8. 화면 및 기능 구성
-
-| **화면**                         | **핵심 구성요소**                                              | **답해야 하는 질문**                              |
-|----------------------------------|----------------------------------------------------------------|---------------------------------------------------|
-| S-01 Morning Cockpit             | KPI strip, 변동 Driver, Exception Queue, 향후 현금흐름         | 오늘 무엇을 먼저 처리해야 하는가?                 |
-| S-02 Portfolio Explorer          | Heatmap, Scatter, Waterfall, Top contributors, Position table  | 어디서 변화가 발생했고 어떤 종목이 원인인가?      |
-| S-03 Settlement & Reconciliation | 예상/실제, 시스템별 값, fail reason, Exception workflow        | 무엇이 왜 안 맞고 누가 처리해야 하는가?           |
-| S-04 Securities Lending          | Inventory, utilization, fee, collateral, counterparty exposure | 어떤 채권을 대여할 가치가 있고 리스크는 무엇인가? |
-| S-05 Scenario Lab                | 금리/spread/FX/fee/haircut slider, 결과 비교                   | 가정이 바뀌면 손익·수익·담보가 어떻게 변하는가?   |
-| S-06 Explain Drawer              | Metric 정의, 산식, source, as-of, 시스템별 값, lineage         | 이 숫자를 믿을 근거는 무엇인가?                   |
-
-## 8.1 공통 인터랙션 규칙
-
-- 상단 Context Bar: As-of Date, Portfolio, Currency, Compare 기준을 모든 화면에서 유지한다.
-
-- 필터를 변경하면 URL 또는 view state에 반영하여 링크 공유 시 동일 컨텍스트를 재현한다.
-
-- 수치 단위는 원/천원/백만원/억원/조원 자동축약을 지원하되 hover/Explain에서 원 단위를 제공한다.
-
-- 증감 부호와 색상은 자산/손익 맥락에 따라 오해가 없도록 의미 기반으로 정의한다. 색상만으로 상태를 구분하지 않는다.
-
-- 모든 데이터 그리드는 Search, Sort, Group, Pin, Column selector, Export를 제공한다.
-
-- 시나리오 값은 “가상”임을 명확히 표시하고 운영 데이터와 시각적으로 구분한다.
-
-# 9. 데이터 처리 및 Reconciliation 규칙
-
-## 9.1 Snapshot / As-of 원칙
-
-- 일일/월말 공식 Snapshot과 Intraday 상태를 구분한다.
-
-- 비교분석은 반드시 동일 Metric 정의 및 동일 통화 환산 기준을 사용한다.
-
-- 데이터 Source별 Effective Time, Load Time, Business Date를 별도 보관한다.
-
-- 재처리(backfill) 발생 시 기존 Snapshot의 변경 여부와 버전을 기록한다.
-
-## 9.2 대사 규칙 예시
-
-| **Rule** | **대상**                  | **검증식**                                                                           | **Tolerance/Severity**     |
-|----------|---------------------------|--------------------------------------------------------------------------------------|----------------------------|
-| R-01A    | Expected trade amount     | 동일 As-of의 OMS expected amount = Custody expected amount                           | 0원 또는 상품별 tolerance  |
-| R-01B    | Actual trade amount       | 결제 완료 건의 OMS/Accounting actual amount = Custody actual amount                  | 0원 또는 상품별 tolerance  |
-| R-01C    | Expected vs actual amount | 결제 완료 건에서 동일 거래의 expected amount = actual amount                        | 상품별 tolerance           |
-| R-02     | Settlement date           | OMS settlement date = Custody settlement date                                        | 0 business day             |
-| R-03     | Position nominal          | PMS nominal = Custody position                                                       | 상품별 tolerance           |
-| R-04     | Book value                | Accounting book value = Data mart official book value                                | rounding tolerance         |
-| R-05     | Accrued interest          | 회계 미수이자 = 계산 엔진 결과                                                       | 상품/Day-count별 tolerance |
-| R-06     | Collateral                | 동일 As-of/기준통화의 post-haircut collateral value ≥ required collateral - tolerance | 부족 시 Critical           |
-
-- R-01A~R-01C는 거래 상태와 기준시각이 같은 값끼리만 비교한다. 미결제 정상 건에는
-  R-01C를 적용하지 않는다.
-- R-06의 담보가치는 자산별 haircut 적용 후 승인된 동일 As-of FX로 환산한다.
-  상품/통화별 tolerance를 적용하며 가격, haircut, FX 또는 시점 정렬이 누락된 경우
-  담보 부족으로 단정하지 않고 Data Quality 예외로 분류한다.
-
-# 10. API / 서비스 인터페이스 초안
-
-| **Endpoint**                    | **목적**                            | **주요 파라미터**                                                                                       |
-|---------------------------------|-------------------------------------|---------------------------------------------------------------------------------------------------------|
-| GET /cockpit                    | 기준일 KPI 및 예외 Summary          | asOf, portfolio, currency, compare                                                                      |
-| POST /analytics/query           | 허용된 Metric + Dimensions 집계     | asOf, portfolio, currency, metric, dimensions/groupBy, aggregation, filters, compare                    |
-| GET /positions/{securityId}     | 종목 Position 및 거래 history       | asOf, portfolio, currency                                                                               |
-| GET /exceptions                 | Settlement/Reconciliation 예외 목록 | status, severity, owner, due, causeType                                                                 |
-| PATCH /exceptions/{id}          | 예외 workflow 변경                  | causeType, status, owner, comment, dueAt, waiverReason, approverId, version/If-Match                    |
-| GET /metrics/{metricId}/explain | 정의·산식·source·lineage            | asOf, context, metricVersion                                                                            |
-| POST /scenario/run              | 가정 기반 영향도 계산               | shocks, portfolio, asOf, currency, modelVersion                                                         |
-| GET /lending/opportunities      | 대여 후보/fee/inventory             | asOf, portfolio, currency, filters; ranking은 Phase 4에서 추가                                          |
-| GET /views                      | 사용자 Saved View 목록              | owner, cursor                                                                                           |
-| POST /views                     | Saved View 저장                     | context, layout, filters, metricVersions, snapshotVersion                                               |
-| GET /views/{id}                 | Saved View 조회                     | id                                                                                                      |
-| PATCH /views/{id}               | Saved View 수정/명시적 버전 전환    | context, layout, filters, metricVersions, snapshotVersion, version/If-Match                             |
-| DELETE /views/{id}              | Saved View 삭제                     | id, version/If-Match                                                                                    |
-
-### 10.1 Analytics Query 계약
-
-- `asOf`, `portfolio`, `currency`, `metric`은 명시적인 공통 Context이며 모든 연결 뷰와
-  Compare 요청에 동일하게 적용한다.
-- Metric Dictionary에 등록된 dimension과 aggregation 조합만 허용한다. 임의 field,
-  무제한 group-by, 권한 범위 밖 filter는 실행하지 않는다.
-- 허용되지 않은 query shape은 검증 오류로, 데이터 범위 권한 위반은 권한 오류로
-  구분하여 반환한다. 서버는 query cost/depth/row limit guardrail을 적용한다.
-- 응답에는 적용된 Context, Metric 정의 버전, Snapshot/data 버전, 단위와 As-of를
-  포함하여 연결 뷰가 같은 계산 기준을 검증할 수 있게 한다.
-
-### 10.2 Exception 변경 계약
-
-- Operator는 권한 범위 내 원인 유형, 담당자, 상태, 메모, 처리기한을 변경할 수 있다.
-  Manager는 팀 범위 배정과 Waived를 승인하며 Viewer는 변경할 수 없다.
-- `Waived`에는 `waiverReason`과 승인 권한을 가진 `approverId`가 필수다. 상태별 필수
-  필드가 없으면 변경을 거부한다.
-- `version` 또는 `If-Match`를 요구하며 불일치하면 최신 값을 덮어쓰지 않고
-  precondition failed를 반환한다.
-- 성공한 모든 변경은 사용자, 시각, 전후값, 사유를 감사로그에 기록하고 응답에
-  새 version과 Audit ID를 포함한다.
-
-### 10.3 Saved View 생명주기
-
-- 사용자는 본인이 소유한 Saved View를 생성, 조회, 수정, 삭제할 수 있다. 다른
-  사용자의 View는 명시적인 공유 정책이 적용된 경우에만 읽을 수 있으며 수정/삭제할
-  수 없다.
-- 조회 시 현재 사용자의 Role + Data Scope를 다시 평가한다.
-- 재현성을 위해 저장 당시 Metric 정의 버전과 Snapshot/data 버전을 고정한다.
-  최신 정의로의 변경은 차이를 확인한 뒤 수행하는 명시적 migration이며 원본
-  버전은 이력으로 보존한다.
-
-# 11. 오류/예외 및 상태 설계
-
-| **구분**           | **상태**                                          | **정책**                                      |
-|--------------------|---------------------------------------------------|-----------------------------------------------|
-| Data Status        | Fresh / Delayed / Partial / Failed                | 화면 상단 및 Metric 수준에 최신성 상태 노출   |
-| Exception Severity | Info / Warning / High / Critical                  | 금액영향·마감·규칙 위반 유형으로 산정         |
-| Workflow Status    | New / Investigating / Waiting / Resolved / Waived | 아래 전이표와 권한 규칙 적용                  |
-| Scenario Status    | Draft / Applied / Saved                           | Applied 결과는 운영 수치와 혼동되지 않게 표시 |
-
-### 11.1 Exception workflow 전이 및 권한
-
-모든 전이는 예외의 현재 `version`을 검증하며, 성공 시 새 version과 Audit ID를
-반환한다. 별도 명시가 없는 한 Viewer와 Admin은 운영 예외 상태를 변경할 수 없다.
-
-| **현재 상태** | **다음 상태** | **허용 역할**       | **필수 조건**                         |
-|---------------|---------------|---------------------|---------------------------------------|
-| New           | Investigating | Operator, Manager   | 담당자 지정                           |
-| Investigating | Waiting       | Operator, Manager   | 대기 사유 또는 외부 확인 포인트       |
-| Investigating | Resolved      | Operator, Manager   | 원인 유형, 처리 메모, 해결 증적        |
-| Waiting       | Investigating | Operator, Manager   | 재개 사유                              |
-| Waiting       | Resolved      | Operator, Manager   | 원인 유형, 처리 메모, 해결 증적        |
-| Resolved      | Investigating | Operator, Manager   | 재오픈 사유                            |
-| New           | Waived        | Manager             | waiverReason, 승인자                  |
-| Investigating | Waived        | Manager             | waiverReason, 승인자                  |
-| Waiting       | Waived        | Manager             | waiverReason, 승인자                  |
-| Resolved      | Waived        | Manager             | waiverReason, 승인자                  |
-| Waived        | Investigating | Manager             | 재오픈 사유 및 Waived 철회 증적        |
-
-`New → Resolved` 같은 조사 없는 직접 해결과 `Waived`로의 Operator 변경은 허용하지
-않는다. `approverId`는 Manager 권한과 해당 데이터 범위를 가져야 하며, Waived
-변경의 사유·승인자·전후 상태는 감사로그에 필수로 기록한다.
+- Source 실패를 빈 배열이나 0으로 변환하지 않는다.
+- 일부 Source만 성공한 경우 화면 전체를 Fresh로 표시하지 않는다.
+- fallback 사용 시 primary 실패 사유와 실제 provider를 표시한다.
+- 계약되지 않은 데이터는 `Unlicensed`로 표시하고 유사값으로 대체하지 않는다.
+- 원천 페이지 링크가 변경되면 Source 상태를 점검 대상으로 표시한다.
+- 수치 하단에 “외부 참고정보이며 공식 회계·결제 결과가 아님”을 표시한다.
 
 # 12. 테스트 및 수용 기준
 
-| **ID** | **검증 영역**      | **수용 기준**                                                        |
-|--------|--------------------|----------------------------------------------------------------------|
-| AC-01  | Cockpit KPI 정합성 | 동일 기준일 공식 원장 합계와 정의된 tolerance 내 일치                |
-| AC-02  | Drill-down 보존    | 상위 KPI = 하위 dimension 합계가 rounding tolerance 내 일치          |
-| AC-03  | Compare            | 비교 기준 변경 시 모든 연결 뷰가 동일 컨텍스트로 갱신                |
-| AC-04  | Exception          | 테스트 불일치 데이터가 규칙에 따라 탐지되고 severity가 기대값과 일치 |
-| AC-05  | Audit              | 예외 상태 변경 후 사용자/시각/전후값/Audit ID 조회 가능              |
-| AC-06  | Explain            | 해당 출시 범위의 주요 Metric에 정의·산식·source·as-of가 모두 표시      |
-| AC-07  | Scenario           | 가정값 변경이 원장 데이터에 쓰기 작업을 발생시키지 않음              |
-| AC-08  | 성능               | 정의된 P95 응답시간 기준 만족                                        |
+| ID | 검증 영역 | 수용 기준 |
+|---|---|---|
+| AC-01 | External-only | 내부 endpoint, 내부 파일 업로드, 포트폴리오 입력 경로가 없음 |
+| AC-02 | Source 정합성 | fixture 원천값과 정규화 결과가 단위 변환 후 일치 |
+| AC-03 | Compare | 비교일 변경 시 연결된 지표가 동일 기준으로 갱신 |
+| AC-04 | Provenance | 표시 Metric 100%에 source·as-of·unit·retrieved-at 존재 |
+| AC-05 | Freshness | Fresh/Delayed/Stale/Partial/Failed 경계가 SLA대로 동작 |
+| AC-06 | Failure | Source 장애 시 0·가상값·무표시 성공 상태를 만들지 않음 |
+| AC-07 | Secret | API key가 브라우저·응답·로그·Export에 노출되지 않음 |
+| AC-08 | License | source별 저장·표시·Export 범위가 승인된 이용조건과 일치 |
+| AC-09 | Accessibility | 핵심 화면을 키보드만으로 탐색 가능 |
+| AC-10 | Performance | Dashboard P95 3초 이내 |
 
-# 13. 구현 범위 및 단계
+# 13. 구현 단계
 
-이 단계 번호는 `docs/TODO.md`의 실행 체크리스트와 동일하다. Phase 1~3의 모든 Must
-요구사항과 AC-01~AC-06, AC-08을 통과해야 MVP로 출시하며, Should/Could와 AC-07은
-후속 범위다.
+| 단계 | 범위 | 완료 조건 |
+|---|---|---|
+| Phase 0 — Source Approval | source 목록, 이용조건, key, 단위, SLA 확정 | Source Registry 승인 |
+| Phase 1 — Public Foundation | FreeSIS/FSC, ECOS, 공통 adapter·cache·provenance | FR-001~004, FR-014~016 |
+| Phase 2 — Calendar & Events | KRX/KSD 검증, OpenDART, 검색·캘린더 | FR-006~009, FR-013 |
+| Phase 3 — Lending Market | 공개 대차·공매도 통계 | FR-010~011 |
+| Phase 4 — Licensed Data | 평가가격·fee 등 계약 데이터 | 라이선스와 재배포 검증 |
 
-| **단계**                       | **범위**                                                                  | **목표**                      |
-|--------------------------------|---------------------------------------------------------------------------|-------------------------------|
-| Phase 0 — 상세 설계            | Source/Owner/SLA, Metric/tolerance, 보안 정책, 기술 의사결정               | 구현 전제 승인                |
-| Phase 1 — Foundation           | Data Mart, Metric Dictionary, ingestion, SSO/RBAC/Audit, 공통 API/UI 기반 | 신뢰할 수 있는 단일 조회 기반 |
-| Phase 2 — Core Analytics       | Morning Cockpit, Portfolio Explorer, Explain/Lineage                      | 수치 탐색과 근거 확인          |
-| Phase 3 — Operations MVP       | Settlement/Reconciliation, Closing, Exception workflow, Lending Must     | Must 범위 MVP 출시            |
-| Phase 4 — 1차 고도화 (Should) | Waterfall/Attribution, Lending Opportunity, Scenario, Saved View/Export   | 인사이트·의사결정 지원        |
-| Phase 5 — Optimization         | Context Link, ML anomaly 후보, 자연어 탐색(별도 승인)                     | 반복 분석 자동화              |
+각 Phase는 AC-01을 반복 검증하여 내부 데이터 경로가 추가되지 않도록 한다.
 
 # 14. 주요 리스크 및 미결정 사항
 
-| **리스크**       | **설명**                                        | **대응**                                    |
-|------------------|-------------------------------------------------|---------------------------------------------|
-| 데이터 정의 충돌 | 운용/회계/수탁이 같은 용어를 다른 기준으로 사용 | Metric Dictionary 및 owner 승인 절차 필요   |
-| Source SLA 차이  | Intraday와 공식 마감 데이터의 갱신주기가 다름   | Freshness 표시 및 공식/잠정 값 구분         |
-| 성능             | 자유로운 group-by가 대용량 원천 조회를 유발     | 사전집계, semantic cache, query guardrail   |
-| 수치 책임        | 분석툴 값이 공식 회계수치로 오인될 수 있음      | Official/Indicative 상태 및 provenance 명시 |
-| Scenario 정확도  | 단순 duration 기반과 full reprice 결과 차이     | 모델 수준을 명시하고 검증 범위 정의         |
-| 권한             | 거래/상대방 데이터는 조직별 제한 필요           | Role + data scope 결합 정책                 |
+| 리스크 | 설명 | 대응 |
+|---|---|---|
+| 비문서 API 변경 | FreeSIS 등 UI 기반 endpoint가 변경될 수 있음 | contract monitor와 명시적 실패 |
+| 통계 정의 차이 | 유사 지표의 표본·시각·단위가 다를 수 있음 | Source별 Metric ID 분리 |
+| 발표 지연 | 휴일·개정·기관 사정으로 관측값이 늦을 수 있음 | SLA 기반 freshness |
+| 라이선스 | 평가가격·fee의 저장·재배포가 제한될 수 있음 | 계약 검토 후 feature flag |
+| 일정 완전성 | 공개 Corporate Action이 모든 채권을 포괄하지 않을 수 있음 | coverage와 한계 표시 |
+| 수치 오인 | 참고값이 공식 결산·결제 값으로 오인될 수 있음 | 지속적 disclaimer와 provenance |
+| 외부 장애 | 여러 기관의 API 가용성에 의존 | 독립 source 상태와 제한적 fallback |
 
-# 15. Appendix — 요구사항 추적성 매트릭스
+# 15. 요구사항 추적성
 
-구현 시 각 행을 구체적인 자동 테스트 ID와 UAT 증적 링크로 확장한다.
+| Requirement | Use Case | Acceptance | Module |
+|---|---|---|---|
+| FR-001~003 | UC-01 | AC-03, AC-04, AC-10 | Dashboard |
+| FR-004~006 | UC-02 | AC-02, AC-03 | Rates/Bond Market |
+| FR-007~009 | UC-03, UC-04 | AC-02, AC-04 | Calendar/Events |
+| FR-010~012 | UC-05 | AC-02, AC-08 | Lending Market |
+| FR-013 | UC-04 | 검색 정확도·접근성 테스트 | Search |
+| FR-014~016 | UC-06 | AC-04~AC-06 | Source/Explain |
+| FR-017~019 | UC-07 | AC-07, AC-08 | Platform |
+| FR-020 | 전체 | AC-01 | Privacy Guard |
+| NFR-001~015 | 전체 | AC-01~AC-10 | Platform/Data |
 
-| **Requirement** | **Use Case** | **Acceptance/Test**                         | **Module**                 |
-|-----------------|--------------|---------------------------------------------|----------------------------|
-| FR-001~003      | UC-01        | AC-01, AC-08, Cockpit UAT                   | Morning Cockpit            |
-| FR-004~006      | UC-02        | AC-02, AC-03, cross-filter E2E              | Portfolio Explorer         |
-| FR-007~008      | UC-02        | Attribution/Waterfall 계산 및 UAT           | Portfolio Explorer         |
-| FR-009~013      | UC-03        | AC-04, AC-05, workflow/동시성 E2E           | Settlement/Reconciliation  |
-| FR-014~016      | UC-04        | Closing Bridge/계정대사/체크리스트 UAT      | Closing                    |
-| FR-017~020      | UC-05        | Lending 산식/담보 예외/기회탐색 UAT         | Lending                    |
-| FR-021~022      | UC-06        | AC-07, Scenario model validation            | Scenario                   |
-| FR-023~024      | UC-07        | AC-06, lineage contract test                | Explain/Lineage            |
-| FR-025          | UC-02, UC-03 | 검색 정확도/권한/마스킹 E2E                 | Search                     |
-| FR-026~028      | UC-08        | Saved View lifecycle/네 형식 Export/Alert test | Platform                |
-| FR-029          | UC-03, UC-07 | 설정 승인/버전/권한/Audit test              | Admin                      |
-| FR-030          | UC-03, UC-08 | AC-05, tamper-evident Audit test            | Audit                      |
-| FR-031          | UC-01, UC-02 | Data Status ingestion/UI integration test   | Data Quality               |
-| FR-032          | UC-08        | Context 재현/접근권한 E2E                   | Collaboration              |
-| NFR-001         | UC-01, UC-02 | AC-08, P95 부하 테스트                      | API/UI/Cache               |
-| NFR-002         | UC-01~UC-06  | 수천만 건 Snapshot 부하 테스트              | Data Mart                  |
-| NFR-003         | 전체         | 99.9% SLO/Error budget 운영 검증            | Operations                 |
-| NFR-004         | UC-01~UC-07  | Source SLA 지연/상태 표시 통합 테스트       | Ingestion/Data Quality     |
-| NFR-005         | UC-01~UC-07  | AC-01, AC-02, 재현성/원천대사 테스트        | Semantic Layer             |
-| NFR-006         | 전체         | SSO/RBAC/Data Scope 보안 테스트             | Security                   |
-| NFR-007         | UC-03, UC-08 | AC-05, 감사로그 완전성/위변조 테스트        | Audit                      |
-| NFR-008         | 전체         | 마스킹/로그/Export 데이터 누출 테스트       | Security                   |
-| NFR-009         | UC-07        | AC-06, Lineage coverage 100% 검증           | Metadata/Lineage           |
-| NFR-010         | UC-01~UC-03  | 평균 4 interaction 이내 UX telemetry/UAT    | UX                         |
-| NFR-011         | 전체         | WCAG 2.1 AA 접근성 점검                     | Web UI                     |
-| NFR-012         | 전체         | Chromium 최신 2개 버전 회귀 테스트         | Web UI                     |
-| NFR-013         | 전체         | latency/error/data lag/reconciliation 경보  | Observability              |
-| NFR-014         | 전체         | RPO/RTO 백업 복구 훈련                      | Operations                 |
-| NFR-015         | Admin        | 자산군/Metric/대사 규칙 확장성 테스트       | Metadata/Semantic/REC      |
-| NFR-016         | 전체         | FR/NFR-테스트-UAT 링크 완전성 검사          | Delivery Governance        |
+## 다음 설계 단계
 
-| **다음 설계 단계** 실제 구현 전에는 (1) 내부 Source 목록과 데이터 Owner 확정, (2) Metric Dictionary 워크숍, (3) 대표 20개 예외 시나리오 수집, (4) 화면 와이어프레임 기반 사용자 테스트를 먼저 수행하는 것을 권장한다. |
-|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+1. ECOS, OpenDART, KRX, KSD의 실제 제공 항목과 이용조건을 공식 문서로 확인한다.
+2. 각 Source의 API key 발급 주체와 운영 Secret 보관 방식을 정한다.
+3. 결산·세틀·대여 담당자가 매일 확인하는 외부지표 상위 20개를 확정한다.
+4. 무료 공개 데이터만으로 가능한 MVP와 유료 계약 필요 기능을 분리한다.
+5. 화면 와이어프레임으로 “한눈에 확인” 가능한 정보밀도를 검증한다.

@@ -1,383 +1,238 @@
-# Investment Operations Intelligence Workbench 구현 TODO
+# External Intelligence Dashboard 구현 TODO
 
-이 문서는 [Investment Operations Intelligence Workbench 설계 문서](./design-document.md)
-v0.9를 실제 제품으로 구현하기 위한 작업 목록이다. 설계 문서의 요구사항 ID를
-유지하여 구현, 테스트, 사용자 승인(UAT)을 추적한다.
+이 문서는 [설계 문서](./design-document.md) v1.0을 구현하기 위한 작업 목록이다.
+애플리케이션은 공개 또는 정식 계약한 외부 데이터만 사용한다.
 
-## 구현 원칙
+## 절대 제약
 
-- [ ] `Must` 요구사항은 MVP 출시 조건으로 취급하고 placeholder로 대체하지 않는다.
-- [ ] `Should` 요구사항은 MVP 안정화 후 1차 고도화 범위로 구현한다.
-- [ ] `Could` 요구사항과 설계 문서에 요구사항 ID가 없는 ML 이상 탐지/자연어 탐색은
-      별도 승인 전까지 Backlog로 유지한다.
-- [ ] 모든 주요 수치는 Metric ID, 정의, 산식, 단위, Source, As-of, 갱신 시각을
-      함께 제공한다.
-- [ ] 조회/분석/시나리오 기능은 원천 원장 데이터를 변경하지 않는다.
-- [ ] 기능 완료 시 연결된 FR, NFR, AC의 자동 테스트와 UAT 증적을 함께 남긴다.
+- [ ] 사내 시스템, 내부 API, 내부 DB 및 내부망에 연결하지 않는다. `[FR-020]`
+- [ ] 사내 파일·CSV와 보유종목·거래·전표·결제상태·상대방 데이터를 입력받지
+      않는다. `[FR-020]`
+- [ ] 공개 데이터 또는 정식 계약 데이터 외의 값을 수집하지 않는다.
+- [ ] 누락값을 추정하거나 마지막 값을 최신 관측값으로 복제하지 않는다.
+- [ ] API key를 브라우저, 응답, 로그, 오류, Export에 포함하지 않는다.
+- [ ] 모든 표시값에 source, as-of, unit, retrieved-at을 제공한다.
 
-## Phase 0 — 착수 조건 및 상세 설계
+## Phase 0 — Source 승인
 
-### 업무 범위 확정
+### 업무지표 확정
 
-- [ ] 내부 Source 목록, 인터페이스 방식, 데이터 Owner, 갱신 주기, SLA를 확정한다.
-- [ ] OMS/PMS, 회계, 수탁/결제, Security Master의 식별자 매핑 규칙을 정의한다.
-- [ ] 시장금리, 환율, 평가가격, Credit Spread, 대차 Fee 데이터 공급원을 확정한다.
-- [ ] 공식 일일/월말 Snapshot과 잠정 Intraday 데이터의 사용 기준을 승인받는다.
-- [ ] 대표 Metric의 회계/운용/수탁 정의 충돌을 정리하고 Metric Owner를 지정한다.
-- [ ] 실제 운영에서 발생하는 대표 대사 예외 시나리오 20개 이상을 수집한다.
-- [ ] 상품별 금액, 수량, 날짜, 이자, 담보 tolerance와 severity 정책을 승인받는다.
-- [ ] Official/Indicative/Scenario 수치의 표시 및 사용 정책을 확정한다.
-- [ ] 거래/상대방/포트폴리오별 민감정보 분류와 마스킹 정책을 확정한다.
-- [ ] 월말 체크리스트, 승인 절차, Waived 처리 권한과 증적 요건을 확정한다.
+- [ ] 결산 담당자가 매일 확인하는 외부지표 상위 20개를 확정한다.
+- [ ] Settlement 참고용 시장·통화별 휴장일과 결제 영업일 범위를 확정한다.
+- [ ] 이자·상환·조기상환·공시 이벤트의 필요한 범위를 확정한다.
+- [ ] 채권대여 담당자가 필요한 대차·공매도 지표를 확정한다.
+- [ ] 무료 공개 데이터와 유료 계약 데이터의 출시 범위를 분리한다.
+- [ ] 각 화면에 외부 참고정보 disclaimer를 승인받는다.
 
-### 기술 의사결정
+### Source 검증
 
-- [ ] Frontend, API/BFF, 배치/스트리밍, Data Mart, 캐시, 관측성 기술 스택을
-      ADR로 결정한다.
-- [ ] 수천만 건 Snapshot 조회를 위한 columnar store, 파티셔닝, 사전집계 전략을
-      성능 PoC로 검증한다.
-- [ ] 자유로운 group-by를 제한할 query guardrail과 semantic cache 정책을 정한다.
-- [ ] SSO 연동 방식과 Role + Data Scope 권한 평가 모델을 확정한다.
-- [ ] Audit log의 위변조 방지, 보존 기간, 검색, 백업 정책을 확정한다.
-- [ ] 주요 메타데이터와 사용자 설정의 RPO 1시간/RTO 4시간 달성 방안을 검증한다.
-- [ ] 사내 표준 Chromium 최신 2개 버전과 1440px 기준 지원 범위를 확정한다.
-- [ ] 화면 와이어프레임으로 주요 Persona 대상 사용성 테스트를 수행한다.
+- [ ] FreeSIS의 대상 통계, object ID, 단위, 발표주기, 이용조건을 등록한다.
+- [ ] 공공데이터포털 fallback의 통계 원천과 금액 단위를 검증한다.
+- [ ] 한국은행 ECOS의 기준금리·금리·환율 통계 코드를 확정한다.
+- [ ] OpenDART의 발행사 공시 검색 범위와 호출 제한을 확인한다.
+- [ ] KRX의 휴장일·채권·공매도 데이터 제공 범위와 이용조건을 확인한다.
+- [ ] KSD의 종목정보·상환·이자·대차 데이터 제공 범위와 이용조건을 확인한다.
+- [ ] 평가가격·spread·fee benchmark의 유료 공급자 계약 필요성을 결정한다.
+- [ ] 각 Source의 저장, 캐시, 화면 표시, Export, 재배포 허용범위를 기록한다.
 
-## Phase 1 — Foundation
+### Key 발급과 운영
 
-### 저장소와 개발 기반
+- [ ] `DATA_GO_KR_SERVICE_KEY`의 운영용 인증키를 발급한다.
+- [ ] ECOS API key를 발급한다.
+- [ ] OpenDART API key를 발급한다.
+- [ ] 필요한 경우 KRX/KSD 또는 계약 공급자 credential을 발급한다.
+- [ ] key를 서버 환경변수 또는 Secret Manager로만 주입한다.
+- [ ] credential 만료·교체·폐기 절차를 정한다.
+- [ ] Source별 read-only 최소권한을 확인한다.
 
-- [ ] Frontend, API/BFF, domain service, ingestion, database migration의 프로젝트
-      구조를 생성한다.
-- [ ] 개발/테스트/운영 환경별 설정과 Secret 주입 방식을 구성한다.
-- [ ] Formatter, lint, type-check, unit/integration/E2E test 명령을 구성한다.
-- [ ] CI에 build, test, migration 검증, 취약점 검사를 연결한다.
-- [ ] 개발용 비식별 seed data와 재현 가능한 로컬 실행 환경을 제공한다.
-- [ ] API 버전, 오류 응답, pagination, date/time, currency, decimal 규약을 정한다.
+## Phase 1 — Public Data Foundation
 
-### 인증, 권한, 감사 기반
+### Source Registry
 
-- [ ] SSO 인증과 사용자/조직 동기화를 구현한다. `[NFR-006]`
-- [ ] Viewer, Operator, Manager, Admin 역할을 구현한다.
-- [ ] Portfolio/Asset/Org 데이터 범위를 역할과 함께 평가한다. `[NFR-006]`
-- [ ] 조회와 변경 권한을 분리하고 UI와 API 양쪽에서 동일하게 강제한다.
-- [ ] 권한에 따라 거래/상대방 데이터를 마스킹하고 로그 노출도 최소화한다.
-      `[NFR-008]`
-- [ ] 상태/설정 변경과 Export의 사용자, 시각, 전후값, 사유, Audit ID를 기록하는
-      append-only 감사 기반을 구현한다. `[FR-030] [NFR-007]`
-- [ ] 권한 거부와 감사 이벤트를 보안 모니터링에 연결한다.
+- [ ] Source ID, provider, dataset, official reference URL을 등록한다.
+- [ ] Observation Date, Published Time, Retrieved-at 및 timezone을 등록한다.
+- [ ] 원천 단위, monetary scale, 정밀도, 개정정책을 등록한다.
+- [ ] 갱신주기, 예상 발표시각, 지연·stale SLA를 등록한다.
+- [ ] 라이선스와 cache/export 허용범위를 등록한다.
+- [ ] primary와 fallback의 통계적 동등성을 명시한다.
 
-### 데이터 수집과 Snapshot
+### Adapter 및 정규화
 
-- [ ] Position, Transaction, Accounting, Settlement, Lending, Market, Metadata의
-      canonical schema를 정의한다.
-- [ ] Source별 Effective Time, Load Time, Business Date를 별도 저장한다.
-- [ ] 공식 일일/월말 Snapshot과 Intraday 상태를 구분하여 저장한다.
-- [ ] 재처리/backfill 시 Snapshot 버전, 변경 범위, 실행자를 기록한다.
-- [ ] Source identifier를 canonical security/trade/counterparty ID로 정규화한다.
-- [ ] 금액은 원통화와 기준통화 환산값, 적용 환율, 환율 기준시각을 함께 보관한다.
-- [ ] 중복, 누락, 참조 무결성, 기준일 불일치, 비정상 값 검증을 ingestion에 넣는다.
-- [ ] Source SLA에 따라 Fresh/Delayed/Partial/Failed 상태를 계산한다.
-- [ ] 부분 실패를 성공으로 표시하지 않고 재처리 가능한 실패 내역을 노출한다.
-- [ ] 비식별 fixture로 정상, 지연, 누락, 중복, backfill 경로를 통합 테스트한다.
+- [ ] Source별 timeout, response size, content type, schema 검증을 구현한다.
+- [ ] 날짜, 숫자, 단위, 비율, bp, 환율 통화쌍을 명시적으로 정규화한다.
+- [ ] 원천 응답의 누락·비정상·중복 관측값을 거부한다.
+- [ ] 비슷하지만 정의가 다른 지표를 별도 Metric ID로 유지한다.
+- [ ] 공휴일·미발표일에 이전 관측값을 새 관측값으로 복제하지 않는다.
+- [ ] Source 개정값과 최초 공표값의 보존 정책을 구현한다.
+- [ ] 원천 fixture와 정규화 결과의 contract test를 작성한다. `[AC-02]`
 
-### Data Mart와 Semantic Layer
+### Cache 및 최신성
 
-- [ ] 기준일, 포트폴리오, 자산군, 등급, 만기, 발행사, 종목, 거래 차원을 모델링한다.
-- [ ] Position/Transaction/Cashflow/Lending/Market 시계열 fact를 구현한다.
-- [ ] 일별/월말/Intraday 파티셔닝과 핵심 화면용 사전집계를 구현한다.
-- [ ] 동일 Metric 정의와 동일 환산 기준으로 현재/전일/전월말/전년말 비교를 계산한다.
-- [ ] Metric + Dimensions + Filters + Compare 요청을 처리하는 semantic query
-      contract를 구현한다.
-- [ ] Metric별 허용 차원, aggregation, 단위, 정밀도, 데이터 범위를 검증한다.
-- [ ] 상위 KPI와 하위 차원 합계가 rounding tolerance 내에서 보존되게 한다.
-      `[AC-02]`
-- [ ] 장부가, 평가손익, Expected Settlement, Settlement Fail,
-      Lending Utilization, Expected Lending Revenue, Collateral Coverage를
-      첫 Metric Dictionary로 등록한다.
-- [ ] Lending Utilization과 Collateral Coverage의 0 분모는 `NULL`/N/A로 처리하고
-      대여 Fee 단위, Day-count, FX/As-of, post-haircut 기준을 Metric 버전에 고정한다.
-- [ ] Admin이 Metric 정의, 대사 규칙, threshold, Source를 관리하는 설정 모델과
-      승인/버전 이력을 구현한다. `[FR-029]`
+- [ ] Source 이용조건에 맞는 cache TTL을 구현한다.
+- [ ] Fresh/Delayed/Stale/Partial/Failed/Unlicensed 상태를 계산한다.
+- [ ] 일부 Source 실패를 전체 Fresh 상태로 표시하지 않는다.
+- [ ] fallback 사용 시 실제 provider와 primary 실패 사유를 보존한다.
+- [ ] source latency, error, data lag, cache age를 수집한다.
 
-### API/BFF 공통 기반
+### 공통 API
 
-- [ ] `POST /analytics/query`에 asOf, portfolio, currency, metric, 허용된
-      dimensions/aggregation, filters, compare 검증과 권한 필터를 구현한다.
-- [ ] `GET /positions/{securityId}`에 기준일별 position과 transaction history를
-      구현한다.
-- [ ] 종목명, ISIN, 거래 ID, 전표 ID, 상대방 통합검색과 권한 필터를 구현한다.
-      `[FR-025]`
-- [ ] 대용량 grid용 cursor pagination, 안정적인 sort, 제한된 group-by를 구현한다.
-- [ ] 요청 correlation ID, 구조화 오류, timeout/cancel, rate/query limit을 구현한다.
-- [ ] API latency, query error, data lag를 수집하고 운영 알림에 연결한다.
-      `[NFR-013]`
+- [ ] `GET /api/dashboard`를 구현한다.
+- [ ] `GET /api/rates`를 구현한다.
+- [ ] `GET /api/bond-market`을 구현한다.
+- [ ] `GET /api/metrics/{id}/explain`을 구현한다.
+- [ ] `GET /api/sources/status`를 구현한다.
+- [ ] 응답에 source, asOf, publishedAt, retrievedAt, unit, status,
+      referenceUrl을 포함한다.
+- [ ] cursor pagination과 안정적인 정렬을 구현한다.
+- [ ] correlation ID, 구조화 오류, timeout 및 rate limit을 구현한다.
 
-### Web Workbench 공통 기반
+### 공통 UI
 
-- [ ] 1440px 우선 반응형 App Shell과 주요 화면 routing을 구현한다.
-- [ ] 모든 화면에서 As-of Date, Portfolio, Currency, Compare를 유지하는 Context
-      Bar를 구현한다.
-- [ ] 필터/정렬/선택 상태를 URL 또는 직렬화 가능한 view state에 반영한다.
-- [ ] Cross-filter, drill-down breadcrumb, Undo, Reset 인터랙션 기반을 구현한다.
-- [ ] 원/천원/백만원/억원/조원 자동축약과 원 단위 상세 표시를 구현한다.
-- [ ] 증가/감소 색상은 Metric 의미에 따라 적용하고 아이콘/텍스트 상태를 병행한다.
-- [ ] 공통 grid에 Search, Sort, Group, Pin, Column selector를 구현한다.
-- [ ] Fresh/Delayed/Partial/Failed를 화면 상단과 Metric 수준에 표시한다.
-      `[FR-031]`
-- [ ] Loading, empty, partial, forbidden, error 상태를 명시적으로 구현한다.
-- [ ] 키보드 탐색, focus, 스크린리더 label, 색상 외 상태 표현, 대비를 WCAG 2.1
-      AA 기준으로 점검한다. `[NFR-011]`
-
-### Phase 1 완료 조건
-
-- [ ] 동일 기준일/필터에서 Metric 결과가 재현되고 원천 합계와 대사된다.
-      `[NFR-005]`
-- [ ] 해당 Phase에서 출시하는 Metric Dictionary의 모든 주요 Metric 100%에 정의,
-      산식, Source, As-of 메타데이터가 등록된다. `[NFR-009]`
-- [ ] 권한별 허용/거부/마스킹 통합 테스트를 통과한다.
-- [ ] Backfill과 데이터 지연이 Snapshot 또는 최신성 상태를 훼손하지 않는다.
-- [ ] 대표 데이터 규모의 semantic query 부하 하네스와 성능 baseline을 확정한다.
-      `[NFR-002]`
-
-## Phase 2 — Core Analytics
-
-### Morning Cockpit
-
-- [ ] 기준일 장부가, 손익, 금일 결제, 미결제, 대여잔고, 예외 KPI strip을
-      구현한다. `[FR-001]`
-- [ ] `GET /cockpit`에 KPI, 데이터 상태, 예외 Summary, 향후 현금흐름을 구현한다.
-- [ ] 전일/전월말/전년말 대비 절대차와 증감률을 구현한다. `[FR-002]`
-- [ ] 중요 변화 Driver를 차원/종목 contribution으로 계산하고 표시한다.
-      `[FR-002]`
-- [ ] severity, 금액 영향, 마감기한 기반 Action Queue 정렬을 구현한다.
-      `[FR-003]`
-- [ ] KPI/Driver/Exception 선택이 연결 뷰와 상세 grid를 Cross-filter하게 한다.
-- [ ] KPI에서 원천 거래까지 3~4단계 이내로 도달하는 drill-through를 구현한다.
-      `[G-01]`
-
-### Portfolio Explorer
-
-- [ ] 사용자가 Metric, X/Y축, Color, Size, Group By를 선택하는 query builder를
-      구현한다. `[FR-004]`
-- [ ] 등급 x 잔존만기 Heatmap과 셀 선택 Cross-filter를 구현한다. `[FR-005]`
-- [ ] 현재와 전일/전월말/전년말/Benchmark 비교 선택을 구현한다. `[FR-006]`
-- [ ] 절대차와 증감률을 차트와 grid에 병렬 표시한다. `[FR-006]`
-- [ ] 자산군 → 등급/만기 → 발행사 → 종목 → 거래/전표 drill-down을 구현한다.
-- [ ] Position 상세에서 관련 거래와 전표로 이동하는 링크를 구현한다.
-- [ ] 모든 연결 뷰가 동일한 context와 filter state를 사용하게 한다.
-
-### Explain / Lineage
-
-- [ ] Metric, KPI, 셀, 거래에서 공통 Explain Drawer를 열 수 있게 한다.
-- [ ] `GET /metrics/{metricId}/explain`에 정의, 산식, 단위, Source, As-of,
-      갱신 시각을 구현한다. `[FR-023]`
-- [ ] 계산 노드에서 집계/원천 field까지 이어지는 lineage를 구현한다.
-- [ ] 운용/회계/수탁 시스템별 값과 차이를 동일 화면에 표시한다. `[FR-024]`
-- [ ] 사용 중인 Metric 정의와 Snapshot 버전을 Explain 결과에 고정한다.
-- [ ] 권한 없는 Source 상세는 숨기되 차이/메타데이터 제공 정책을 일관되게 적용한다.
-
-### Phase 2 완료 조건
-
-- [ ] Cockpit KPI가 공식 원장 합계와 정의된 tolerance 내에서 일치한다. `[AC-01]`
-- [ ] 상위 KPI와 drill-down 하위 합계가 rounding tolerance 내에서 일치한다.
-      `[AC-02]`
-- [ ] Compare 변경 시 모든 연결 뷰가 동일 context로 갱신된다. `[AC-03]`
-- [ ] 해당 Phase에서 출시하는 모든 주요 Metric의 Explain 필수 항목이 누락 없이
-      표시된다. `[AC-06]`
-- [ ] 핵심 KPI에서 예외 원인 또는 원천 거래까지 평균 4 interaction 이내다.
-      `[NFR-010]`
-- [ ] 대표 데이터 규모로 Cockpit P95 3초, 일반 drill-down P95 2초를 달성한다.
-      `[NFR-001] [NFR-002] [AC-08]`
-
-## Phase 3 — Operations MVP
-
-### Reconciliation Engine
-
-- [ ] Source별 거래/금액/상태를 canonical key로 매칭하는 대사 엔진을 구현한다.
-      `[FR-010]`
-- [ ] Trade amount, Settlement date, Position nominal, Book value,
-      Accrued interest, Collateral 규칙을 metadata-driven 방식으로 구현한다.
-- [ ] 상품/통화/규칙별 tolerance와 severity 설정을 적용한다.
-- [ ] 미결제, 금액/결제일/종목/수량 불일치를 자동 탐지한다. `[FR-011]`
-- [ ] 대사 실행 버전, 입력 Snapshot, 규칙 버전, 결과를 재현 가능하게 저장한다.
-- [ ] reconciliation failure와 처리 지연을 운영 모니터링에 연결한다.
-
-### Settlement & Reconciliation
-
-- [ ] 당일/향후 결제 예정 건을 현금, 증권, 통화, 상대방별로 조회한다.
-      `[FR-009]`
-- [ ] 예상/실제 결제금액, cash/security movement, 결제 상태를 표시한다.
-- [ ] 시스템별 거래조건, 장부/전표, 수탁/결제 값을 나란히 비교한다.
-- [ ] 예외에 원인 유형, 담당자, 상태, 메모, 처리기한을 관리한다. `[FR-012]`
-- [ ] New/Investigating/Waiting/Resolved/Waived 상태 전이를 권한별로 검증한다.
-- [ ] Waived 변경은 사유와 승인자를 필수로 하고 Audit ID를 반환한다.
-- [ ] 예상/실제 차이에서 거래 단위까지 drill-through한다. `[FR-013]`
-- [ ] `GET /exceptions`와 원인 유형, 담당자, 상태, 메모, 처리기한, Waived
-      사유/승인자를 변경하는 `PATCH /exceptions/{id}`를 구현한다.
-- [ ] `version`/`If-Match` 기반 충돌 탐지와 412 응답으로 최신 상태를 덮어쓰지
-      않게 한다.
-
-### Closing
-
-- [ ] 전월말 장부가에서 매수/매도/상환/상각/FX/평가를 거쳐 당월말 장부가로
-      연결되는 Bridge를 구현한다. `[FR-014]`
-- [ ] Bridge 항목에서 종목/거래/전표 contribution으로 drill-down한다.
-- [ ] 미수이자, 이자수익, 평가손익, 처분손익의 시스템 간 대사를 구현한다.
-      `[FR-015]`
-- [ ] 반올림, Day-count, 환율, Snapshot 차이가 설명 결과에 포함되게 한다.
-
-### Securities Lending의 Must 범위
-
-- [ ] 보유, 대여 중, 대여 가능 잔고와 평균/종목별 Fee 조회를 구현한다.
-      `[FR-017]`
-- [ ] `GET /lending/opportunities`에 inventory, utilization, fee를 구현한다.
-      `[FR-017]`
-- [ ] 담보가치, 요구담보액, 담보비율, haircut, 부족액을 계산한다. `[FR-019]`
-- [ ] 상대방별 exposure와 concentration을 조회한다. `[FR-019]`
-- [ ] 담보 부족을 Critical 예외로 생성하고 Action Queue에 연결한다.
-- [ ] Lending Metric에서 inventory, 계약, 담보 원천까지 drill-through한다.
-
-### Audit 및 운영 관리
-
-- [ ] 예외 상태/담당자/메모/기한의 모든 변경에 전후값과 Audit ID를 기록한다.
-- [ ] Metric, 대사 규칙, threshold, Source 변경에 승인자와 버전을 기록한다.
-- [ ] Admin 화면에서 설정 이력과 적용 시점을 조회한다.
-- [ ] 감사로그 검색과 보존/백업/복구 절차를 운영 문서화한다.
-
-### Phase 3 완료 조건
-
-- [ ] 예외 fixture가 규칙에 따라 탐지되고 severity가 기대값과 일치한다. `[AC-04]`
-- [ ] 예외 변경 후 사용자, 시각, 전후값, 사유, Audit ID를 조회할 수 있다.
-      `[AC-05]`
-- [ ] Operator/Manager/Admin의 상태 변경 범위와 Viewer 읽기 전용을 검증한다.
-- [ ] 공식/잠정 값과 Fresh/Delayed/Partial/Failed 상태가 모든 운영 화면에서
-      구분된다.
-- [ ] Phase 1~3의 모든 `Must` 요구사항과 연결된 UAT가 통과한다.
-
-## Phase 4 — 1차 고도화 (`Should`)
-
-### 분석과 Closing 고도화
-
-- [ ] 손익/장부가 변동 Waterfall과 contribution 분해를 구현한다. `[FR-007]`
-- [ ] Top/Bottom contributor와 종목별 기여도를 구현한다. `[FR-008]`
-- [ ] 월말 체크리스트, 담당자, 완료/미완료, 마감기한 관리를 구현한다.
+- [ ] As-of, Compare, Market, Currency, Source Context Bar를 구현한다.
+- [ ] Portfolio, Account, Owner, Counterparty 필드를 제공하지 않는다.
+- [ ] 모든 Metric에 출처·기준일·단위·갱신시각을 표시한다. `[FR-014]`
+- [ ] 지표 Explain에서 공식 원천 페이지 또는 방법론 문서로 이동한다. `[FR-015]`
+- [ ] Fresh/Delayed/Stale/Partial/Failed/Unlicensed 상태를 표시한다.
       `[FR-016]`
+- [ ] Loading, empty, partial, error 상태를 구분한다.
+- [ ] 필터를 URL state에 반영한다.
+- [ ] 키보드 탐색, focus, 색상 외 상태표현을 구현한다.
 
-### Securities Lending 고도화
+### Dashboard
 
-- [ ] Fee x 가용잔고 x 보유액 Scatter/Heatmap과 Cross-filter를 구현한다.
-      `[FR-018]`
-- [ ] 상환예정, Recall, Corporate Action 영향을 표시한다. `[FR-020]`
-- [ ] 기회 종목 ranking 기준과 예상수익 산식을 Metric Dictionary로 관리한다.
+- [ ] 기준금리, 주요 채권금리, 환율, 시장자금, 거래지표 KPI를 표시한다.
+      `[FR-001]`
+- [ ] 전일·전주·전월말 절대차와 증감률을 표시한다. `[FR-002]`
+- [ ] 주요 변화와 예정 외부 이벤트를 표시한다. `[FR-003]`
+- [ ] 기준일에 관측값이 없으면 명시적 미발표 상태를 표시한다.
+- [ ] Dashboard P95 3초 이내 성능 baseline을 측정한다. `[AC-10]`
 
-### Scenario Lab
+### Rates Explorer
 
-- [ ] 금리, Spread, FX, Lending Fee, 대여율, Haircut 가정 입력을 구현한다.
-      `[FR-021]`
-- [ ] `POST /scenario/run`에 허용 범위 검증, 모델 버전, 입력 Snapshot 고정을
-      구현한다.
-- [ ] Current와 Scenario의 평가손익, 수익, 담보 영향을 계산한다. `[FR-022]`
-- [ ] Duration 근사와 Full Reprice 등 모델 수준/한계를 결과에 표시한다.
-- [ ] Scenario를 운영 수치와 시각적으로 구분하고 쓰기 경로를 분리한다.
-- [ ] Scenario 실행이 원장 데이터 변경을 발생시키지 않는지 검증한다. `[AC-07]`
+- [ ] 지표, 만기, 등급, 기간을 선택하는 query UI를 구현한다. `[FR-004]`
+- [ ] 금리 시계열과 수익률곡선을 구현한다.
+- [ ] 동일 기준일의 호환 가능한 만기에서만 spread를 계산한다. `[FR-005]`
+- [ ] 차트와 표가 같은 source와 as-of를 사용하게 한다.
+- [ ] 지표에서 Explain과 공식 원문으로 이동한다.
 
-### Saved View, Export, Alert
+## Phase 2 — Calendar, Events, Search
 
-- [ ] 사용자 context, layout, filters, sort, chart 구성을 저장/재호출한다.
-      `[FR-026]`
-- [ ] `GET /views`, `POST /views`, `GET/PATCH/DELETE /views/{id}`와 소유자 기반
-      Saved View lifecycle 권한을 구현한다.
-- [ ] 조회 시 현재 권한을 재평가하되 저장 당시 Metric 정의 버전과 Snapshot/data
-      버전을 고정하여 context를 재현한다.
-- [ ] 최신 Metric 정의로의 전환은 영향 차이를 보여 주는 명시적 migration으로
-      제공하고 원본 Saved View 버전을 보존한다.
-- [ ] 현재 분석 context를 Excel/CSV/PDF/이미지로 Export한다. `[FR-027]`
-- [ ] Export에 As-of, filters, Metric 정의 버전, 생성자, 생성시각을 포함한다.
-- [ ] 대용량/민감정보 Export를 권한과 정책으로 제한하고 감사로그를 기록한다.
-- [ ] 금액, 건수, 임계치, 마감시간 기반 알림 규칙과 전달 상태를 구현한다.
-      `[FR-028]`
-- [ ] 중복 알림 억제, 확인, 재시도, 비활성화와 알림 감사 이력을 구현한다.
-- [ ] Phase 4의 Should 요구사항과 AC-07을 통과한 뒤 고도화 범위를 출시한다.
+### Settlement Calendar
 
-## Phase 5 — Optimization Backlog (`Could`/별도 승인)
+- [ ] `GET /api/calendar`를 구현한다.
+- [ ] 국내외 시장·통화별 휴장일과 결제 영업일을 표시한다. `[FR-007]`
+- [ ] 시장 timezone과 KST 표시를 구분한다.
+- [ ] 공개 일정의 coverage와 한계를 표시한다.
+- [ ] 결제 완료 여부나 내부 예상 결제 건은 표시하지 않는다.
 
-- [ ] 동일 context를 재현하는 예외/분석 화면 링크 공유를 구현한다. `[FR-032]`
-- [ ] 공유 링크 접근 시 현재 사용자의 데이터 범위 권한을 다시 평가한다.
-- [ ] ML anomaly 후보 탐지의 학습 데이터, 설명가능성, 오탐 관리 기준을 설계한다.
-- [ ] 자연어 탐색의 허용 Metric/Dimension, 권한, query preview, 비용 제한을
-      설계한다.
-- [ ] Phase 5 항목은 별도 요구사항/수용 기준 승인 후 구현한다.
+### Security Events 및 Disclosures
 
-## 공통 비기능 요구사항 및 출시 Gate
+- [ ] `GET /api/security-events`를 구현한다.
+- [ ] 공개 이자·상환·조기상환·Corporate Action을 표시한다. `[FR-008]`
+- [ ] OpenDART 공시와 발행사 이벤트를 연결한다. `[FR-009]`
+- [ ] 신용등급·등급전망 데이터는 이용권한 확인 후 표시한다.
+- [ ] 이벤트별 공식 원문 링크와 공표시각을 제공한다.
 
-### 성능, 가용성, 복구
+### Search
 
-- [ ] 운영 유사 데이터에서 Cockpit 최초 로드 P95 3초 이내를 달성한다.
-      `[NFR-001] [AC-08]`
-- [ ] 일반 drill-down P95 2초 이내를 달성한다. `[NFR-001] [AC-08]`
-- [ ] 수천만 건 거래/포지션 이력의 일/월말 Snapshot 조회 부하 테스트를 통과한다.
-      `[NFR-002]`
-- [ ] 업무시간 월 가용성 99.9% SLO와 error budget을 운영한다. `[NFR-003]`
-- [ ] 메타데이터/사용자 설정 백업 복구 훈련으로 RPO 1시간/RTO 4시간을 검증한다.
-      `[NFR-014]`
+- [ ] `GET /api/search`를 구현한다.
+- [ ] 종목명, ISIN, 발행사, 외부 공시를 검색한다. `[FR-013]`
+- [ ] 내부 거래 ID와 전표 ID 검색을 제공하지 않는다.
+- [ ] 검색 결과에 source와 데이터 coverage를 표시한다.
 
-### 보안과 관측성
+### Bond Market
 
-- [ ] 인증 우회, 수평/수직 권한 상승, data scope 누출, Export 누출을 보안
-      테스트한다.
-- [ ] Secret, PII, 민감 거래/상대방 값이 application/audit/trace 로그에
-      불필요하게 남지 않는지 점검한다.
-- [ ] API latency, query error, data lag, ingestion/reconciliation failure
-      dashboard와 경보를 운영한다. `[NFR-013]`
-- [ ] Audit 보존, 접근, 위변조 탐지, 복구 절차를 검증한다.
+- [ ] 발행·상환·잔액·거래량을 기간별로 조회한다. `[FR-006]`
+- [ ] 채권유형과 source별 정의 차이를 표시한다.
+- [ ] 원천 통계와 합계가 일치하는지 검증한다.
 
-### 품질과 접근성
+## Phase 3 — Lending Market
 
-- [ ] Unit test로 Metric 산식, tolerance, severity, 상태 전이, 권한 평가를
-      검증한다.
-- [ ] Integration test로 ingestion → mart → semantic query → API 흐름을
-      검증한다.
-- [ ] Contract test로 Frontend/API 및 Source adapter schema 변경을 탐지한다.
-- [ ] E2E test로 UC-01~UC-08의 기본/권한/오류 흐름을 검증한다.
-- [ ] Chrome 최신 2개 버전에서 핵심 화면 회귀 테스트를 수행한다. `[NFR-012]`
-- [ ] 키보드 전용 탐색, focus order, screen reader label, 대비를 검증한다.
-      `[NFR-011]`
-- [ ] 새 자산군/Metric/대사 규칙을 최소한의 코드 변경으로 추가하는 확장성
-      테스트를 수행한다. `[NFR-015]`
+- [ ] `GET /api/lending-market`을 구현한다.
+- [ ] 공개 대차 체결·상환·잔고 추이를 표시한다. `[FR-010]`
+- [ ] 공매도 거래량·잔고를 대차지표와 함께 비교한다. `[FR-011]`
+- [ ] 수량·금액·비율 단위를 혼합하지 않는다.
+- [ ] 종목별 fee는 정식 이용권한과 정의가 있을 때만 표시한다. `[FR-012]`
+- [ ] 내부 대여 가능 잔고, 계약, 담보, 상대방 exposure를 표시하지 않는다.
+- [ ] 대차·공매도 수치가 투자 추천이 아니라는 설명을 제공한다.
 
-### 요구사항 추적과 출시
+## Phase 4 — Export 및 계약 데이터
 
-- [ ] 각 FR/NFR에 코드 모듈, 테스트케이스, UAT 결과, 운영 runbook 링크를
-      연결한다. `[NFR-016]`
-- [ ] 데이터 Owner가 Metric Dictionary와 원천 대사 결과를 승인한다.
-- [ ] 업무 Owner가 예외 workflow, Closing Bridge, Lending 결과를 승인한다.
-- [ ] 보안 담당자가 RBAC, data scope, 마스킹, Audit, Export 정책을 승인한다.
-- [ ] 운영 담당자가 배포, rollback, backfill, 장애, 데이터 지연, 복구 runbook을
-      승인한다.
-- [ ] 모든 Must 항목과 AC-01~AC-06, AC-08을 통과한 뒤 MVP를 출시한다.
+- [ ] 현재 표를 CSV로 Export한다. `[FR-017]`
+- [ ] 차트를 이미지로 Export한다. `[FR-017]`
+- [ ] Export에 source, as-of, unit, retrieved-at, 생성시각을 포함한다.
+- [ ] 공급자별 Export 허용범위를 서버에서 강제한다. `[AC-08]`
+- [ ] 외부 이벤트와 지표 임계치의 브라우저 알림 범위를 결정한다. `[FR-018]`
+- [ ] Source 상태·라이선스·갱신주기 조회 화면을 구현한다. `[FR-019]`
+- [ ] 평가가격, spread, fee benchmark는 계약 확인 후 feature flag로 활성화한다.
+- [ ] 계약 만료 시 데이터를 `Unlicensed`로 전환하고 신규 제공을 중단한다.
+
+## 공통 검증 Gate
+
+### External-only
+
+- [ ] 내부 endpoint 설정이 존재하지 않는다. `[AC-01]`
+- [ ] 내부 파일·CSV 업로드 UI와 API가 존재하지 않는다. `[AC-01]`
+- [ ] 포트폴리오·보유·거래·전표·상대방 입력 필드가 존재하지 않는다.
+- [ ] 로그와 telemetry에 내부 업무정보를 수집하는 필드가 없다.
+
+### 출처와 정합성
+
+- [ ] 표시 Metric 100%에 source·as-of·unit·retrieved-at이 있다. `[AC-04]`
+- [ ] 원천 fixture와 변환 결과가 정의된 단위로 일치한다. `[AC-02]`
+- [ ] Compare 변경 시 연결된 화면이 동일한 기준으로 갱신된다. `[AC-03]`
+- [ ] Source 장애 시 0이나 가상값을 표시하지 않는다. `[AC-06]`
+- [ ] freshness 상태 경계가 Source SLA와 일치한다. `[AC-05]`
+
+### Secret과 라이선스
+
+- [ ] API key가 브라우저 bundle과 네트워크 응답에 없다. `[AC-07]`
+- [ ] API key가 로그, 오류, URL, Export에 없다. `[AC-07]`
+- [ ] 저장·캐시·표시·Export가 Source 이용조건과 일치한다. `[AC-08]`
+- [ ] 미계약 데이터가 유사한 공개값으로 대체되지 않는다.
+
+### 품질
+
+- [ ] 단위·날짜·Metric mapping unit test를 통과한다.
+- [ ] Source adapter contract test를 통과한다.
+- [ ] 부분 실패와 fallback integration test를 통과한다.
+- [ ] 주요 Use Case E2E test를 통과한다.
+- [ ] Chromium 최신 2개 버전에서 회귀 테스트를 수행한다.
+- [ ] 키보드 전용 탐색과 focus order를 검증한다. `[AC-09]`
+- [ ] Dashboard P95 3초를 검증한다. `[AC-10]`
 
 ## 요구사항 추적 체크리스트
 
-| 요구사항 | 우선순위 | 구현 Phase | 상태 |
-|---|---|---:|---|
-| FR-001~003 Morning Cockpit | Must | 2 | [ ] |
-| FR-004~006 Portfolio Explorer | Must | 2 | [ ] |
-| FR-007~008 Attribution | Should | 4 | [ ] |
-| FR-009~013 Settlement/Reconciliation | Must | 3 | [ ] |
-| FR-014~015 Closing | Must | 3 | [ ] |
-| FR-016 Closing Checklist | Should | 4 | [ ] |
-| FR-017 Lending Inventory/Fee | Must | 3 | [ ] |
-| FR-018 Lending Opportunity | Should | 4 | [ ] |
-| FR-019 Collateral/Exposure | Must | 3 | [ ] |
-| FR-020 Recall/Corporate Action | Should | 4 | [ ] |
-| FR-021~022 Scenario Lab | Should | 4 | [ ] |
-| FR-023~024 Explain/Lineage | Must | 2 | [ ] |
-| FR-025 Unified Search | Must | 1 | [ ] |
-| FR-026 Saved View | Should | 4 | [ ] |
-| FR-027 Export | Should | 4 | [ ] |
-| FR-028 Alert | Should | 4 | [ ] |
-| FR-029 Admin | Must | 1/3 | [ ] |
-| FR-030 Audit | Must | 1/3 | [ ] |
-| FR-031 Data Quality Status | Must | 1 | [ ] |
-| FR-032 Context Link Sharing | Could | 5 | [ ] |
+| 요구사항 | 범위 | 상태 |
+|---|---|---|
+| FR-001~003 | External Dashboard | [ ] |
+| FR-004~005 | Rates & Spread Explorer | [ ] |
+| FR-006 | Bond Market | [ ] |
+| FR-007 | Settlement Calendar | [ ] |
+| FR-008~009 | Security Events/Disclosures | [ ] |
+| FR-010~012 | Lending Market | [ ] |
+| FR-013 | External Search | [ ] |
+| FR-014~016 | Explain/Data Status | [ ] |
+| FR-017~019 | Export/Alert/Source Admin | [ ] |
+| FR-020 | External-only Privacy Guard | [ ] |
+| NFR-001~015 | 공통 비기능 요구사항 | [ ] |
+
+## 비기능 요구사항 추적 체크리스트
+
+| 요구사항 | 검증 작업 | 상태 |
+|---|---|---|
+| NFR-001 | Dashboard P95 부하 테스트 | [ ] |
+| NFR-002 | Source SLA와 freshness 시간 경계 테스트 | [ ] |
+| NFR-003 | 원천 fixture와 정규화 결과 정합성 테스트 | [ ] |
+| NFR-004 | Metric provenance 100% coverage test | [ ] |
+| NFR-005 | 독립 Source 부분 실패 테스트 | [ ] |
+| NFR-006 | 브라우저·응답·로그 Secret 노출 검사 | [ ] |
+| NFR-007 | 내부 업무정보 입력·로그·telemetry 부재 검사 | [ ] |
+| NFR-008 | Source별 저장·표시·Export 라이선스 승인 | [ ] |
+| NFR-009 | WCAG 2.1 AA 접근성 점검 | [ ] |
+| NFR-010 | Chromium 최신 2개 버전 회귀 테스트 | [ ] |
+| NFR-011 | source latency·error·lag·cache age 관측성 검증 | [ ] |
+| NFR-012 | Source adapter 확장성 contract test | [ ] |
+| NFR-013 | cache TTL과 계약 만료 데이터 삭제 테스트 | [ ] |
+| NFR-014 | URL allowlist·timeout·response size/schema 보안 테스트 | [ ] |
+| NFR-015 | FR/NFR·Source·테스트 추적성 완전성 검사 | [ ] |
