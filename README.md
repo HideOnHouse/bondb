@@ -1,6 +1,11 @@
 # bondb
 
-Investment Operations Intelligence Workbench for bond operations.
+External market intelligence dashboard for bond closing, settlement-calendar,
+and securities-lending reference data.
+
+The approved product scope uses public or properly licensed external data only.
+It does not connect to internal systems or accept holdings, trades, accounting,
+settlement, counterparty, or other private business data.
 
 ## Run locally
 
@@ -45,20 +50,11 @@ fallback row with an overlapping FreeSIS row. The official API documents the
 field meanings but not the monetary scale, so the server refuses to activate
 the fallback without this explicit operator validation.
 
-To use an authorized internal portfolio snapshot instead, configure the server
-with a live snapshot endpoint:
-
-```bash
-SNAPSHOT_URL=https://your-internal-service.example/snapshot npm run dev
-```
-
-An internal endpoint must return JSON with `asOf`, `snapshotTime`, and these arrays:
-`cashflows`, `checklist`, `drivers`, `lendingRows`, `metricDictionary`, `metrics`,
-`positions`, `exceptions`, and `auditEvents`. Refresh requests the endpoint again
-with `Cache-Control: no-store`. This endpoint is for authorized private
-portfolio data only; the public FreeSIS/FSC sources do not provide portfolio
-holdings, P&L, settlement workflow, lending inventory, or exception queues.
-If a source is missing or invalid, the UI remains unavailable.
+Additional approved external sources such as ECOS, OpenDART, KRX, KSD, and
+licensed pricing providers will be added through server-side source adapters.
+Provider keys must remain outside browser code and the repository. See
+[`docs/design-document.md`](docs/design-document.md) and
+[`docs/SOURCE.md`](docs/SOURCE.md).
 
 ## Deploy on EC2
 
@@ -70,7 +66,6 @@ mode `0600`, and place the server-side values there:
 ```text
 DATA_GO_KR_SERVICE_KEY=your-private-key
 DATA_GO_KR_MONETARY_SCALE=1000000
-SNAPSHOT_URL=https://internal.example/snapshot
 ```
 
 When replacing an existing deployment, stop its service and move the current
@@ -85,15 +80,10 @@ sudo systemctl enable --now bondb.service
 
 ## Implemented first slice
 
-- PatternFly-aligned application shell with persistent As-of, portfolio, and
-  compare context for authorized internal snapshots.
-- Morning Cockpit KPI strip, data freshness banner, change drivers, exception-first
-  Action Queue, upcoming cashflow, and closing checklist.
-- Portfolio Explorer, Settlement & Reconciliation, Securities Lending, and
-  Administration views for an authorized internal snapshot.
-- Cross-filtering, URL context state, keyboard-accessible table rows, and an
-  explain drawer with metric lineage.
+- Official KOFIA market-funds data through FreeSIS.
+- Financial Services Commission Public Data Portal fallback.
+- Source provenance, observation date, retrieval time, explicit unavailable
+  states, and URL date context.
 
-The implementation follows the supplied Investment Operations Intelligence
-Workbench design package. Reference documents remain outside the runtime
-dependency graph so the application stays dependency-free.
+The remaining dashboard, rates, calendar, event, and lending-market features are
+tracked in [`docs/TODO.md`](docs/TODO.md).
